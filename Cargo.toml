@@ -1,0 +1,35 @@
+[package]
+name = "flow-like-typst-nodes"
+version = "0.1.0"
+edition = "2021"
+description = "FlowLike WASM nodes for compiling Typst documents"
+license = "MIT"
+repository = "https://github.com/flow-like/flow-like-typst-nodes"
+keywords = ["flow-like", "wasm", "typst", "pdf", "documents"]
+categories = ["wasm", "template-engine"]
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+binstall-tar = "0.4"
+ecow = { version = "=0.2.6", features = ["serde"] }
+flate2 = "1.1"
+flow-like-wasm-sdk = "0.3.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+typst = "0.14.2"
+typst-as-lib = "0.15.4"
+typst-assets = { version = "0.14.2", features = ["fonts"] }
+typst-pdf = "0.14.2"
+typst-svg = "0.14.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

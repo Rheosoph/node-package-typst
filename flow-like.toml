@@ -1,0 +1,47 @@
+description = "Compile Typst source text into PDF or SVG documents, with FlowLike-backed assets and Typst Universe package resolution"
+id = "com.flow-like.typst"
+keywords = [
+    "typst",
+    "pdf",
+    "svg",
+    "document",
+    "template",
+]
+license = "MIT"
+manifest_version = 1
+name = "Typst Documents"
+repository = "https://github.com/flow-like/flow-like-typst-nodes"
+version = "0.1.0"
+
+[[authors]]
+name = "Felix Schultz (Rheosoph GmbH)"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile Typst source text into PDF"
+id = "typst_source_to_pdf"
+name = "Typst Source to PDF"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile a Typst source file from FlowLike storage into PDF"
+id = "typst_file_to_pdf"
+name = "Typst File to PDF"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile Typst source text into SVG"
+id = "typst_source_to_svg"
+name = "Typst Source to SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Validate Typst source text and return diagnostics metadata"
+id = "typst_validate_source"
+name = "Validate Typst Source"
+
+# Resource limits for the package sandbox (memory & timeout).
+# Permissions are declared per-node in Rust code via `node.add_permission(NodePermission::*)`.
+[permissions]
+memory = "heavy"
+timeout = "extended"
