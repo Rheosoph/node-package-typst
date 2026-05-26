@@ -30,15 +30,75 @@ name = "Typst File to PDF"
 
 [[nodes]]
 category = "Document/Typst"
+description = "Compile a Typst source file from FlowLike storage into SVG"
+id = "typst_file_to_svg"
+name = "Typst File to SVG"
+
+[[nodes]]
+category = "Document/Typst"
 description = "Compile Typst source text into SVG"
 id = "typst_source_to_svg"
 name = "Typst Source to SVG"
 
 [[nodes]]
 category = "Document/Typst"
+description = "Compile Typst source text once into PDF and SVG"
+id = "typst_source_to_pdf_svg"
+name = "Typst Source to PDF + SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile a Typst source file once into PDF and SVG"
+id = "typst_file_to_pdf_svg"
+name = "Typst File to PDF + SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile Typst template source with JSON data into PDF"
+id = "typst_template_to_pdf"
+name = "Typst Template to PDF"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile a Typst template file with JSON data into PDF"
+id = "typst_template_file_to_pdf"
+name = "Typst Template File to PDF"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile Typst template source with JSON data into SVG"
+id = "typst_template_to_svg"
+name = "Typst Template to SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile a Typst template file with JSON data into SVG"
+id = "typst_template_file_to_svg"
+name = "Typst Template File to SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile Typst template source with JSON data once into PDF and SVG"
+id = "typst_template_to_pdf_svg"
+name = "Typst Template to PDF + SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile a Typst template file with JSON data once into PDF and SVG"
+id = "typst_template_file_to_pdf_svg"
+name = "Typst Template File to PDF + SVG"
+
+[[nodes]]
+category = "Document/Typst"
 description = "Validate Typst source text and return diagnostics metadata"
 id = "typst_validate_source"
 name = "Validate Typst Source"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Validate a Typst source file and return diagnostics metadata"
+id = "typst_validate_file"
+name = "Validate Typst File"
 
 # Resource limits for the package sandbox (memory & timeout).
 # Permissions are declared per-node in Rust code via `node.add_permission(NodePermission::*)`.

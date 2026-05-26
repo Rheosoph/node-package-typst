@@ -13,7 +13,7 @@ use std::{
     sync::Mutex,
 };
 use typst::diag::{FileError, FileResult, PackageError};
-use typst::foundations::Bytes;
+use typst::foundations::{Array, Bytes, Dict, Str, Value};
 use typst::layout::{Abs, PagedDocument};
 use typst::syntax::{package::PackageSpec, FileId, Source, VirtualPath};
 use typst_as_lib::{
@@ -94,9 +94,49 @@ pub fn add_package_pin(node: &mut NodeDefinition) {
     .set_default_value(json!(true));
 }
 
+pub fn add_template_data_pin(node: &mut NodeDefinition) {
+    node.add_input_pin(
+        "template_data",
+        "Data",
+        "JSON object exposed to Typst templates through sys.inputs",
+        VariableType::String,
+    )
+    .set_default_value(json!("{}"));
+}
+
 pub fn add_output_file_pin(node: &mut NodeDefinition, description: &str) {
     node.add_input_pin("output_file", "Output", description, VariableType::Struct)
         .set_schema::<FlowPath>();
+}
+
+pub fn add_pdf_svg_output_file_pins(node: &mut NodeDefinition) {
+    node.add_input_pin(
+        "pdf_output_file",
+        "PDF Output",
+        "FlowPath file where the PDF will be written",
+        VariableType::Struct,
+    )
+    .set_schema::<FlowPath>();
+
+    node.add_input_pin(
+        "svg_output_file",
+        "SVG Output",
+        "FlowPath file where the SVG will be written",
+        VariableType::Struct,
+    )
+    .set_schema::<FlowPath>();
+}
+
+pub fn add_svg_padding_pin(node: &mut NodeDefinition) {
+    node.add_input_pin(
+        "padding_pt",
+        "Padding",
+        "SVG padding in points",
+        VariableType::Float,
+    )
+    .set_default_value(json!(0.0))
+    .set_range(0.0, 144.0)
+    .set_step(1.0);
 }
 
 pub fn add_report_output(node: &mut NodeDefinition) {
@@ -152,6 +192,20 @@ pub fn read_file_project(ctx: &Context) -> Result<TypstProject, String> {
 }
 
 pub fn compile_project(project: TypstProject) -> Result<CompiledTypstDocument, String> {
+    compile_project_with_optional_inputs(project, None)
+}
+
+pub fn compile_project_with_inputs(
+    project: TypstProject,
+    inputs: Dict,
+) -> Result<CompiledTypstDocument, String> {
+    compile_project_with_optional_inputs(project, Some(inputs))
+}
+
+fn compile_project_with_optional_inputs(
+    project: TypstProject,
+    inputs: Option<Dict>,
+) -> Result<CompiledTypstDocument, String> {
     let main_path = project.main_path;
     let main_id = file_id(&main_path);
 
@@ -178,7 +232,10 @@ pub fn compile_project(project: TypstProject) -> Result<CompiledTypstDocument, S
 
     let engine = builder.build();
 
-    let warned = engine.compile(main_path.as_str());
+    let warned = match inputs {
+        Some(inputs) => engine.compile_with_input(main_path.as_str(), inputs),
+        None => engine.compile(main_path.as_str()),
+    };
     let document: PagedDocument = warned
         .output
         .map_err(|error| format!("Typst compilation failed: {error:?}"))?;
@@ -189,6 +246,70 @@ pub fn compile_project(project: TypstProject) -> Result<CompiledTypstDocument, S
         .collect();
 
     Ok(CompiledTypstDocument { document, warnings })
+}
+
+pub fn read_template_inputs(ctx: &Context) -> Result<Dict, String> {
+    let raw = ctx.get_string("template_data").unwrap_or_default();
+    let raw = if raw.trim().is_empty() {
+        "{}"
+    } else {
+        raw.trim()
+    };
+
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| format!("template_data must be valid JSON: {error}"))?;
+
+    let serde_json::Value::Object(object) = value else {
+        return Err("template_data must be a JSON object".to_string());
+    };
+
+    let mut inputs = Dict::new();
+    for (key, value) in object {
+        inputs.insert(Str::from(key), json_value_to_typst(value)?);
+    }
+
+    Ok(inputs)
+}
+
+fn json_value_to_typst(value: serde_json::Value) -> Result<Value, String> {
+    match value {
+        serde_json::Value::Null => Ok(Value::None),
+        serde_json::Value::Bool(value) => Ok(Value::Bool(value)),
+        serde_json::Value::Number(value) => json_number_to_typst(value),
+        serde_json::Value::String(value) => Ok(Value::Str(Str::from(value))),
+        serde_json::Value::Array(values) => {
+            let mut array = Array::new();
+            for value in values {
+                array.push(json_value_to_typst(value)?);
+            }
+            Ok(Value::Array(array))
+        }
+        serde_json::Value::Object(values) => {
+            let mut dict = Dict::new();
+            for (key, value) in values {
+                dict.insert(Str::from(key), json_value_to_typst(value)?);
+            }
+            Ok(Value::Dict(dict))
+        }
+    }
+}
+
+fn json_number_to_typst(value: serde_json::Number) -> Result<Value, String> {
+    if let Some(value) = value.as_i64() {
+        return Ok(Value::Int(value));
+    }
+
+    if let Some(unsigned_value) = value.as_u64() {
+        return i64::try_from(unsigned_value)
+            .map(Value::Int)
+            .or_else(|_| value.as_f64().map(Value::Float).ok_or_else(number_error));
+    }
+
+    value.as_f64().map(Value::Float).ok_or_else(number_error)
+}
+
+fn number_error() -> String {
+    "template_data contains a number that cannot be represented in Typst".to_string()
 }
 
 fn read_source_text(ctx: &Context) -> String {
@@ -237,7 +358,11 @@ pub fn failure_report(format: &str, error: &str) -> TypstCompileReport {
 }
 
 pub fn read_output_file(ctx: &Context) -> Result<FlowPath, String> {
-    ctx.require_input_as("output_file")
+    read_flow_path_pin(ctx, "output_file")
+}
+
+pub fn read_flow_path_pin(ctx: &Context, pin_name: &str) -> Result<FlowPath, String> {
+    ctx.require_input_as(pin_name)
 }
 
 pub fn write_output(ctx: &Context, output_file: &FlowPath, bytes: &[u8]) -> Result<(), String> {
@@ -538,4 +663,49 @@ fn source_from_bytes(id: FileId, bytes: &[u8]) -> FileResult<Source> {
 
 fn file_not_found(id: FileId) -> FileError {
     FileError::NotFound(id.vpath().as_rootless_path().to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_template_data_converts_to_typst_values() {
+        let value = serde_json::json!({
+            "title": "Quarterly Briefing",
+            "count": 3,
+            "draft": true,
+            "items": ["Data", null],
+            "meta": { "client": "Rheosoph" }
+        });
+
+        let Value::Dict(dict) = json_value_to_typst(value).expect("json should convert") else {
+            panic!("root object should convert to dictionary");
+        };
+
+        assert!(
+            matches!(dict.get("title").unwrap(), Value::Str(value) if value.as_str() == "Quarterly Briefing")
+        );
+        assert!(matches!(dict.get("count").unwrap(), Value::Int(3)));
+        assert!(matches!(dict.get("draft").unwrap(), Value::Bool(true)));
+        assert!(matches!(dict.get("items").unwrap(), Value::Array(_)));
+        assert!(matches!(dict.get("meta").unwrap(), Value::Dict(_)));
+    }
+
+    #[test]
+    fn compile_project_accepts_template_inputs() {
+        let mut inputs = Dict::new();
+        inputs.insert(Str::from("title"), Value::Str(Str::from("Template Title")));
+
+        let project = TypstProject {
+            main_path: MAIN_FILE.to_string(),
+            source: "#import sys: inputs\n= #inputs.title".to_string(),
+            source_folder: None,
+            allow_universe_packages: false,
+        };
+
+        let compiled =
+            compile_project_with_inputs(project, inputs).expect("template should compile");
+        assert_eq!(compiled.document.pages.len(), 1);
+    }
 }

@@ -14,16 +14,29 @@ Implemented in this package:
 | `Typst Source to PDF` | Compile Typst source text into PDF and write the PDF to an output `FlowPath`. |
 | `Typst File to PDF` | Read a `.typ` file from FlowLike storage and compile it into PDF. |
 | `Typst Source to SVG` | Compile Typst source text into SVG and write the SVG to an output `FlowPath`. |
+| `Typst File to SVG` | Read a `.typ` file from FlowLike storage and compile it into SVG. |
+| `Typst Source to PDF + SVG` | Compile Typst source text once and write both output formats. |
+| `Typst File to PDF + SVG` | Read a `.typ` file, compile once, and write both output formats. |
+| `Typst Template to PDF` | Compile Typst template source with JSON data into PDF. |
+| `Typst Template File to PDF` | Read a `.typ` template file, apply JSON data, and compile it into PDF. |
+| `Typst Template to SVG` | Compile Typst template source with JSON data into SVG. |
+| `Typst Template File to SVG` | Read a `.typ` template file, apply JSON data, and compile it into SVG. |
+| `Typst Template to PDF + SVG` | Compile Typst template source once and write both output formats. |
+| `Typst Template File to PDF + SVG` | Read a `.typ` template file, apply JSON data once, and write both output formats. |
 | `Validate Typst Source` | Compile Typst source text without exporting, returning success, page count, and warnings. |
+| `Validate Typst File` | Read a `.typ` file and validate it without exporting. |
 
 Primary pins:
 
 | Pin | Type | Use |
 | --- | --- | --- |
-| `source` | `string` | Main Typst source text compiled as `main.typ` by the source/validate nodes. |
-| `source_file` | `FlowPath` | Main `.typ` file used by `Typst File to PDF`. |
+| `source` | `string` | Main Typst source or template text compiled as `main.typ` by source/template nodes. |
+| `source_file` | `FlowPath` | Main `.typ` source or template file used by file nodes. |
+| `template_data` | `string` | JSON object exposed to template nodes through Typst `sys.inputs`. |
 | `source_folder` | `FlowPath` | Folder used as the root for relative imports and assets referenced by `source`. |
 | `output_file` | `FlowPath` | PDF/SVG file to write. Compile nodes always write to this path. |
+| `pdf_output_file` | `FlowPath` | PDF output path for the `PDF + SVG` nodes. |
+| `svg_output_file` | `FlowPath` | SVG output path for the `PDF + SVG` nodes. |
 | `allow_universe_packages` | `bool` | Enables `@preview/...` Typst Universe package downloads through FlowLike host HTTP. Defaults to `true`; displayed as `Packages`. |
 
 When `source_folder` is omitted for `Typst File to PDF`, relative files resolve
@@ -55,6 +68,40 @@ Package files are fetched from `https://packages.typst.org`, decompressed in
 memory for the current node run, and resolved separately from relative project
 files.
 
+## Template Data
+
+Template nodes use Typst's `sys.inputs` support. The `template_data` pin must be
+a JSON object; nested objects, arrays, strings, booleans, numbers, and `null`
+are converted into native Typst values.
+
+Example `template_data`:
+
+```json
+{
+  "title": "Quarterly Briefing",
+  "client": "Rheosoph",
+  "items": ["Data", "Automation", "AI"],
+  "draft": true
+}
+```
+
+Example Typst template:
+
+```typst
+#import sys: inputs
+
+= #inputs.title
+
+Client: #inputs.client
+
+#for item in inputs.items [
+- #item
+]
+```
+
+Relative imports, images, CSV files, bibliographies, and package imports work
+the same way in template nodes as in normal compile nodes.
+
 ## Typst Package Choices
 
 The implementation uses current Typst Rust crates instead of shelling out to
@@ -78,9 +125,7 @@ High-value follow-up nodes:
 
 | Node | Why |
 | --- | --- |
-| `Typst Template to PDF` | Accept `inputs_json`, expose it to Typst templates, and render PDFs for reports/invoices. |
 | `Typst Source to PNG` | Render page images with `typst-render` for previews and thumbnails. |
-| `Typst File to SVG` | Storage-based SVG export matching the PDF file workflow. |
 | `Typst Package Cache` | Persist approved Typst Universe packages through FlowLike storage so repeated runs do not need another network download. |
 | `Typst Project Bundle to PDF` | Compile a whole project from a directory `FlowPath`, preserving relative imports and assets. |
 | `Typst Diagnostics` | Return structured source spans and hints instead of debug-formatted warnings. |

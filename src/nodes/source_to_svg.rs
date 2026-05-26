@@ -17,15 +17,7 @@ impl WasmNode for CompileTypstSourceToSvgNode {
         add_source_pin(&mut node);
         add_source_folder_pin(&mut node);
         add_package_pin(&mut node);
-        node.add_input_pin(
-            "padding_pt",
-            "Padding",
-            "SVG padding in points",
-            VariableType::Float,
-        )
-        .set_default_value(json!(0.0))
-        .set_range(0.0, 144.0)
-        .set_step(1.0);
+        add_svg_padding_pin(&mut node);
         add_output_file_pin(&mut node, "FlowPath file where the SVG will be written");
         node.add_output_pin(
             "exec_out",
