@@ -17,6 +17,14 @@ cp target/wasm32-wasip2/release/flow_like_typst_nodes.wasm node.wasm
 description = "Run unit tests (native)"
 run = "cargo test --target $(rustc -vV | grep host | awk '{print $2}')"
 
+[tasks.examples]
+description = "Regenerate Markdown-to-Typst example documents"
+run = "cargo run --target $(rustc -vV | awk '/^host:/ {print $2}') --example render_examples"
+
+[tasks.examples-check]
+description = "Check that generated example documents are current"
+run = "cargo run --target $(rustc -vV | awk '/^host:/ {print $2}') --example render_examples -- --check"
+
 [tasks.clean]
 description = "Clean build artifacts"
 run = """

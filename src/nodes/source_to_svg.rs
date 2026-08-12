@@ -42,7 +42,13 @@ impl WasmNode for CompileTypstSourceToSvgNode {
     }
 
     fn run(&self, mut ctx: Context) -> ExecutionResult {
-        let project = read_source_project(&ctx);
+        let project = match read_source_project(&ctx) {
+            Ok(project) => project,
+            Err(error) => {
+                ctx.set_output_json("report", &failure_report("svg", &error));
+                return ctx.fail(error);
+            }
+        };
         let compiled = match compile_project(project) {
             Ok(compiled) => compiled,
             Err(error) => {
@@ -71,7 +77,6 @@ impl WasmNode for CompileTypstSourceToSvgNode {
         }
 
         ctx.set_output_json("report", &report(&compiled, "svg", svg.len()));
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }

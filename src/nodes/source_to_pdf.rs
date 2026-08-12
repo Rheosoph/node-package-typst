@@ -41,7 +41,13 @@ impl WasmNode for CompileTypstSourceToPdfNode {
     }
 
     fn run(&self, mut ctx: Context) -> ExecutionResult {
-        let project = read_source_project(&ctx);
+        let project = match read_source_project(&ctx) {
+            Ok(project) => project,
+            Err(error) => {
+                ctx.set_output_json("report", &failure_report("pdf", &error));
+                return ctx.fail(error);
+            }
+        };
         let compiled = match compile_project(project) {
             Ok(compiled) => compiled,
             Err(error) => {
@@ -75,7 +81,6 @@ impl WasmNode for CompileTypstSourceToPdfNode {
         }
 
         ctx.set_output_json("report", &report(&compiled, "pdf", pdf.len()));
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }

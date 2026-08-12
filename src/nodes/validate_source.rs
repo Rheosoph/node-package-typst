@@ -38,18 +38,23 @@ impl WasmNode for ValidateTypstSourceNode {
     }
 
     fn run(&self, mut ctx: Context) -> ExecutionResult {
-        let project = read_source_project(&ctx);
+        let project = match read_source_project(&ctx) {
+            Ok(project) => project,
+            Err(error) => {
+                ctx.set_output("valid", false);
+                ctx.set_output_json("report", &failure_report("typst", &error));
+                return ctx.success();
+            }
+        };
         match compile_project(project) {
             Ok(compiled) => {
                 ctx.set_output("valid", true);
                 ctx.set_output_json("report", &report(&compiled, "typst", 0));
-                ctx.activate_exec("exec_out");
                 ctx.success()
             }
             Err(error) => {
                 ctx.set_output("valid", false);
                 ctx.set_output_json("report", &failure_report("typst", &error));
-                ctx.activate_exec("exec_out");
                 ctx.success()
             }
         }

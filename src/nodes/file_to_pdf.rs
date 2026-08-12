@@ -81,7 +81,6 @@ impl WasmNode for CompileTypstFileToPdfNode {
         }
 
         ctx.set_output_json("report", &report(&compiled, "pdf", pdf.len()));
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }

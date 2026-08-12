@@ -1,3 +1,4 @@
+use crate::nodes::read_pdf_svg_output_files;
 use crate::shared::*;
 use flow_like_wasm_sdk::*;
 
@@ -9,12 +10,14 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
     fn get_node(&self) -> NodeDefinition {
         let mut node = NodeDefinition::new(
             "typst_template_file_to_pdf_svg",
-            "Typst Template File to PDF + SVG",
-            "Reads a Typst template file, applies JSON data once, and writes both PDF and SVG outputs",
+            "Typst File with Template to PDF + SVG",
+            "Reads a Typst document file, applies an optional imported template function, and writes PDF and SVG outputs",
             CATEGORY,
         );
         node.add_input_pin("exec", "Exec", "Trigger pin", VariableType::Execution);
         add_source_file_pin(&mut node);
+        add_template_file_pin(&mut node);
+        add_template_function_pin(&mut node);
         add_template_data_pin(&mut node);
         add_source_folder_pin(&mut node);
         add_package_pin(&mut node);
@@ -50,6 +53,14 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
     }
 
     fn run(&self, mut ctx: Context) -> ExecutionResult {
+        let (pdf_output_file, svg_output_file) = match read_pdf_svg_output_files(&ctx) {
+            Ok(output_files) => output_files,
+            Err(error) => {
+                ctx.set_output_json("report", &failure_report("pdf+svg", &error));
+                return ctx.fail(error);
+            }
+        };
+
         let inputs = match read_template_inputs(&ctx) {
             Ok(inputs) => inputs,
             Err(error) => {
@@ -58,7 +69,7 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
             }
         };
 
-        let project = match read_file_project(&ctx) {
+        let project = match read_template_file_project(&ctx) {
             Ok(project) => project,
             Err(error) => {
                 ctx.set_output_json("report", &failure_report("pdf+svg", &error));
@@ -84,21 +95,6 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
         let padding_pt = ctx.get_f64("padding_pt").unwrap_or(0.0);
         let svg = export_svg(&compiled, padding_pt);
 
-        let pdf_output_file = match read_flow_path_pin(&ctx, "pdf_output_file") {
-            Ok(output_file) => output_file,
-            Err(error) => {
-                ctx.set_output_json("report", &failure_report("pdf+svg", &error));
-                return ctx.fail(error);
-            }
-        };
-        let svg_output_file = match read_flow_path_pin(&ctx, "svg_output_file") {
-            Ok(output_file) => output_file,
-            Err(error) => {
-                ctx.set_output_json("report", &failure_report("pdf+svg", &error));
-                return ctx.fail(error);
-            }
-        };
-
         if let Err(error) = write_output(&ctx, &pdf_output_file, &pdf) {
             ctx.set_output_json("report", &failure_report("pdf+svg", &error));
             return ctx.fail(error);
@@ -114,7 +110,6 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
             "report",
             &report(&compiled, "pdf+svg", pdf.len() + svg.len()),
         );
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }

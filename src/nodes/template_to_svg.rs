@@ -9,12 +9,14 @@ impl WasmNode for CompileTypstTemplateToSvgNode {
     fn get_node(&self) -> NodeDefinition {
         let mut node = NodeDefinition::new(
             "typst_template_to_svg",
-            "Typst Template to SVG",
-            "Compiles Typst template source with JSON data into SVG and writes it to storage",
+            "Typst Source with Template to SVG",
+            "Applies an optional imported Typst template function to source text and writes an SVG",
             CATEGORY,
         );
         node.add_input_pin("exec", "Exec", "Trigger pin", VariableType::Execution);
         add_source_pin(&mut node);
+        add_template_file_pin(&mut node);
+        add_template_function_pin(&mut node);
         add_template_data_pin(&mut node);
         add_source_folder_pin(&mut node);
         add_package_pin(&mut node);
@@ -51,7 +53,13 @@ impl WasmNode for CompileTypstTemplateToSvgNode {
             }
         };
 
-        let project = read_source_project(&ctx);
+        let project = match read_template_source_project(&ctx) {
+            Ok(project) => project,
+            Err(error) => {
+                ctx.set_output_json("report", &failure_report("svg", &error));
+                return ctx.fail(error);
+            }
+        };
         let compiled = match compile_project_with_inputs(project, inputs) {
             Ok(compiled) => compiled,
             Err(error) => {
@@ -80,7 +88,6 @@ impl WasmNode for CompileTypstTemplateToSvgNode {
         }
 
         ctx.set_output_json("report", &report(&compiled, "svg", svg.len()));
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }

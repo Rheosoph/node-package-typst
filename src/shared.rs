@@ -15,13 +15,18 @@ use std::{
 use typst::diag::{FileError, FileResult, PackageError};
 use typst::foundations::{Array, Bytes, Dict, Str, Value};
 use typst::layout::{Abs, PagedDocument};
-use typst::syntax::{package::PackageSpec, FileId, Source, VirtualPath};
+use typst::syntax::{
+    is_ident as is_typst_syntax_identifier, package::PackageSpec, parse_code, FileId, Source,
+    SyntaxKind, VirtualPath,
+};
 use typst_as_lib::{
     cached_file_resolver::CachedFileResolver, file_resolver::FileResolver, TypstEngine,
 };
 
 pub const CATEGORY: &str = "Document/Typst";
 pub const MAIN_FILE: &str = "main.typ";
+pub const DEFAULT_TEMPLATE_FUNCTION: &str = "template";
+const TEMPLATE_ENTRY_FILE: &str = "__flowlike_entry.typ";
 const TYPST_PACKAGE_REPOSITORY_URL: &str = "https://packages.typst.org";
 const MAX_UNIVERSE_PACKAGE_BYTES: usize = 128 * 1024 * 1024;
 pub const DEFAULT_SOURCE: &str = r#"#set page(paper: "a4", margin: 2cm)
@@ -58,7 +63,7 @@ pub fn add_source_pin(node: &mut NodeDefinition) {
     node.add_input_pin(
         "source",
         "Source",
-        "Typst source for main.typ",
+        "Main Typst document source",
         VariableType::String,
     )
     .set_default_value(json!(DEFAULT_SOURCE));
@@ -97,11 +102,31 @@ pub fn add_package_pin(node: &mut NodeDefinition) {
 pub fn add_template_data_pin(node: &mut NodeDefinition) {
     node.add_input_pin(
         "template_data",
-        "Data",
-        "JSON object exposed to Typst templates through sys.inputs",
+        "Template Data (JSON)",
+        "JSON object exposed as template named arguments through sys.inputs",
         VariableType::String,
     )
     .set_default_value(json!("{}"));
+}
+
+pub fn add_template_file_pin(node: &mut NodeDefinition) {
+    node.add_input_pin(
+        "template_file",
+        "Template File",
+        "Optional .typ module exporting the template function to import and apply",
+        VariableType::Struct,
+    )
+    .set_schema::<FlowPath>();
+}
+
+pub fn add_template_function_pin(node: &mut NodeDefinition) {
+    node.add_input_pin(
+        "template_function",
+        "Template Function",
+        "Exported function name to import when template_file is connected",
+        VariableType::String,
+    )
+    .set_default_value(json!(DEFAULT_TEMPLATE_FUNCTION));
 }
 
 pub fn add_output_file_pin(node: &mut NodeDefinition, description: &str) {
@@ -161,32 +186,96 @@ pub fn typst_scores() -> NodeScores {
     }
 }
 
-pub fn read_source_project(ctx: &Context) -> TypstProject {
+pub fn read_source_project(ctx: &Context) -> Result<TypstProject, String> {
     let source = read_source_text(ctx);
 
-    TypstProject {
+    Ok(TypstProject {
         main_path: MAIN_FILE.to_string(),
         source,
-        source_folder: ctx.get_input_as("source_folder"),
+        source_folder: read_optional_flow_path(ctx, "source_folder")?,
         allow_universe_packages: ctx.get_bool("allow_universe_packages").unwrap_or(true),
-    }
+    })
 }
 
 pub fn read_file_project(ctx: &Context) -> Result<TypstProject, String> {
     let source_file: FlowPath = ctx.require_input_as("source_file")?;
+    let source_folder = read_optional_flow_path(ctx, "source_folder")?;
+    let (main_path, source_folder) = file_project_location(&source_file, source_folder)?;
     let source = source_file
         .get_string(ctx)
         .ok_or_else(|| format!("Failed to read Typst source from {}", source_file.path))?;
-    let source_folder = ctx
-        .get_input_as("source_folder")
-        .or_else(|| source_file.parent());
 
     Ok(TypstProject {
-        main_path: source_file
-            .file_name()
-            .unwrap_or_else(|| MAIN_FILE.to_string()),
+        main_path,
         source,
         source_folder,
+        allow_universe_packages: ctx.get_bool("allow_universe_packages").unwrap_or(true),
+    })
+}
+
+pub fn read_template_source_project(ctx: &Context) -> Result<TypstProject, String> {
+    let source = read_template_source_text(ctx);
+    let source_folder = read_optional_flow_path(ctx, "source_folder")?;
+    let template_file = read_optional_flow_path(ctx, "template_file")?;
+    let Some(template_file) = template_file else {
+        return Ok(TypstProject {
+            main_path: MAIN_FILE.to_string(),
+            source,
+            source_folder,
+            allow_universe_packages: ctx.get_bool("allow_universe_packages").unwrap_or(true),
+        });
+    };
+
+    let source_folder = source_folder
+        .or_else(|| template_file.parent())
+        .unwrap_or_else(|| empty_root_like(&template_file));
+
+    read_template_project(ctx, source, None, source_folder, template_file)
+}
+
+pub fn read_template_file_project(ctx: &Context) -> Result<TypstProject, String> {
+    let template_file = read_optional_flow_path(ctx, "template_file")?;
+    let Some(template_file) = template_file else {
+        return read_file_project(ctx);
+    };
+
+    let source_file: FlowPath = ctx.require_input_as("source_file")?;
+    let source_folder = read_optional_flow_path(ctx, "source_folder")?
+        .or_else(|| source_file.parent())
+        .or_else(|| template_file.parent())
+        .unwrap_or_else(|| empty_root_like(&source_file));
+    let main_path = flow_path_relative_to_root(&source_file, &source_folder, "source_file")?;
+    let source = source_file.get_string(ctx).ok_or_else(|| {
+        format!(
+            "Failed to read Typst document source from {}",
+            source_file.path
+        )
+    })?;
+
+    read_template_project(ctx, source, Some(main_path), source_folder, template_file)
+}
+
+fn read_template_project(
+    ctx: &Context,
+    source: String,
+    main_path: Option<String>,
+    source_folder: FlowPath,
+    template_file: FlowPath,
+) -> Result<TypstProject, String> {
+    let template_function = read_template_function(ctx)?;
+    let template_path =
+        flow_path_relative_to_root(&template_file, &source_folder, "template_file")?;
+    let main_path = main_path.unwrap_or_else(|| generated_template_entry_path(&template_path));
+    if main_path == template_path {
+        return Err("source_file and template_file must refer to different files".to_string());
+    }
+    let import_path = relative_import_path(&main_path, &template_path)?;
+    let source = apply_template_source(&import_path, &template_function, &source)?;
+
+    Ok(TypstProject {
+        main_path,
+        source,
+        source_folder: Some(source_folder),
         allow_universe_packages: ctx.get_bool("allow_universe_packages").unwrap_or(true),
     })
 }
@@ -318,6 +407,211 @@ fn read_source_text(ctx: &Context) -> String {
         DEFAULT_SOURCE.to_string()
     } else {
         source
+    }
+}
+
+fn read_template_source_text(ctx: &Context) -> String {
+    ctx.get_string("source")
+        .unwrap_or_else(|| DEFAULT_SOURCE.to_string())
+}
+
+fn read_optional_flow_path(ctx: &Context, pin_name: &str) -> Result<Option<FlowPath>, String> {
+    match ctx.get_input(pin_name) {
+        None => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| format!("Failed to deserialize input '{pin_name}': {error}")),
+    }
+}
+
+fn file_project_location(
+    source_file: &FlowPath,
+    source_folder: Option<FlowPath>,
+) -> Result<(String, Option<FlowPath>), String> {
+    if let Some(source_folder) = source_folder {
+        let main_path = flow_path_relative_to_root(source_file, &source_folder, "source_file")?;
+        return Ok((main_path, Some(source_folder)));
+    }
+
+    if let Some(source_folder) = source_file.parent() {
+        let main_path = flow_path_relative_to_root(source_file, &source_folder, "source_file")?;
+        return Ok((main_path, Some(source_folder)));
+    }
+
+    let main_path = normalized_flow_path(&source_file.path, "source_file", false)?;
+    Ok((main_path, None))
+}
+
+fn read_template_function(ctx: &Context) -> Result<String, String> {
+    let function = ctx
+        .get_string("template_function")
+        .unwrap_or_else(|| DEFAULT_TEMPLATE_FUNCTION.to_string());
+    let function = function.trim();
+    if function.is_empty() {
+        return Ok(DEFAULT_TEMPLATE_FUNCTION.to_string());
+    }
+
+    if is_typst_identifier(function) {
+        Ok(function.to_string())
+    } else {
+        Err(format!(
+            "template_function must be a Typst identifier, got {function:?}"
+        ))
+    }
+}
+
+fn is_typst_identifier(name: &str) -> bool {
+    if !is_typst_syntax_identifier(name) {
+        return false;
+    }
+
+    let parsed = parse_code(name);
+    let mut children = parsed.children();
+    matches!(
+        children.next(),
+        Some(child) if child.kind() == SyntaxKind::Ident && child.text().as_str() == name
+    ) && children.next().is_none()
+}
+
+fn apply_template_source(
+    template_path: &str,
+    template_function: &str,
+    source: &str,
+) -> Result<String, String> {
+    let template_path = typst_string_literal(template_path)?;
+
+    Ok(format!(
+        "#import {template_path}: {template_function} as __flowlike_template\n\
+         #show: __flowlike_template.with(..sys.inputs)\n\n\
+         {source}"
+    ))
+}
+
+fn typst_string_literal(value: &str) -> Result<String, String> {
+    if value.chars().any(|char| char.is_control()) {
+        return Err("Typst import paths cannot contain control characters".to_string());
+    }
+
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    Ok(format!("\"{escaped}\""))
+}
+
+fn flow_path_relative_to_root(
+    file: &FlowPath,
+    root: &FlowPath,
+    pin_name: &str,
+) -> Result<String, String> {
+    if file.store_ref != root.store_ref || file.cache_store_ref != root.cache_store_ref {
+        return Err(format!(
+            "{pin_name} must use the same FlowPath store as source_folder"
+        ));
+    }
+
+    let file_path = normalized_flow_path(&file.path, pin_name, false)?;
+    let root_path = normalized_flow_path(&root.path, "source_folder", true)?;
+
+    if root_path.is_empty() {
+        return Ok(file_path);
+    }
+
+    let prefix = format!("{root_path}/");
+    file_path
+        .strip_prefix(&prefix)
+        .map(|relative| relative.to_string())
+        .filter(|relative| !relative.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "{pin_name} ({}) must be inside source_folder ({})",
+                file.path, root.path
+            )
+        })
+}
+
+fn normalized_flow_path(path: &str, pin_name: &str, allow_empty: bool) -> Result<String, String> {
+    if Path::new(path).is_absolute() {
+        return Err(format!("{pin_name} must be a relative FlowPath"));
+    }
+
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return if allow_empty {
+            Ok(String::new())
+        } else {
+            Err(format!("{pin_name} must not be empty"))
+        };
+    }
+
+    let path = Path::new(trimmed);
+
+    let mut normalized = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(component) => {
+                let component = component.to_str().ok_or_else(|| {
+                    format!("{pin_name} contains a path component that is not valid UTF-8")
+                })?;
+                normalized.push(component);
+            }
+            _ => {
+                return Err(format!(
+                    "{pin_name} must not contain . or .. path components"
+                ));
+            }
+        }
+    }
+
+    Ok(normalized.join("/"))
+}
+
+fn relative_import_path(from_main_path: &str, to_file_path: &str) -> Result<String, String> {
+    let from = path_components(from_main_path, "main Typst source path")?;
+    let to = path_components(to_file_path, "template_file")?;
+    if to.is_empty() {
+        return Err("template_file must not be empty".to_string());
+    }
+
+    let from_dir_len = from.len().saturating_sub(1);
+    let from_dir = &from[..from_dir_len];
+    let mut common = 0;
+    while common < from_dir.len() && common < to.len() && from_dir[common] == to[common] {
+        common += 1;
+    }
+
+    let mut relative = Vec::new();
+    for _ in common..from_dir.len() {
+        relative.push("..".to_string());
+    }
+    relative.extend(to[common..].iter().cloned());
+
+    if relative.is_empty() {
+        Err("template import path must not be empty".to_string())
+    } else {
+        Ok(relative.join("/"))
+    }
+}
+
+fn generated_template_entry_path(template_path: &str) -> String {
+    if template_path != TEMPLATE_ENTRY_FILE {
+        return TEMPLATE_ENTRY_FILE.to_string();
+    }
+
+    "__flowlike_entry_1.typ".to_string()
+}
+
+fn path_components(path: &str, label: &str) -> Result<Vec<String>, String> {
+    normalized_flow_path(path, label, false).map(|path| {
+        path.split('/')
+            .filter(|component| !component.is_empty())
+            .map(|component| component.to_string())
+            .collect()
+    })
+}
+
+fn empty_root_like(path: &FlowPath) -> FlowPath {
+    FlowPath {
+        path: String::new(),
+        store_ref: path.store_ref.clone(),
+        cache_store_ref: path.cache_store_ref.clone(),
     }
 }
 
@@ -669,6 +963,24 @@ fn file_not_found(id: FileId) -> FileError {
 mod tests {
     use super::*;
 
+    fn test_context(inputs: serde_json::Map<String, serde_json::Value>) -> Context {
+        Context::from_input(ExecutionInput {
+            inputs,
+            node_id: "node".to_string(),
+            run_id: "run".to_string(),
+            app_id: "app".to_string(),
+            board_id: "board".to_string(),
+            user_id: "user".to_string(),
+            stream_state: false,
+            log_level: 0,
+            node_name: "test".to_string(),
+        })
+    }
+
+    fn flow_path(path: &str, store_ref: &str) -> FlowPath {
+        FlowPath::new(path.to_string(), store_ref.to_string(), None)
+    }
+
     #[test]
     fn json_template_data_converts_to_typst_values() {
         let value = serde_json::json!({
@@ -707,5 +1019,226 @@ mod tests {
         let compiled =
             compile_project_with_inputs(project, inputs).expect("template should compile");
         assert_eq!(compiled.document.pages.len(), 1);
+    }
+
+    #[test]
+    fn compile_project_applies_function_with_template_inputs() {
+        let mut inputs = Dict::new();
+        inputs.insert(Str::from("title"), Value::Str(Str::from("Template Title")));
+
+        let project = TypstProject {
+            main_path: MAIN_FILE.to_string(),
+            source: r#"#let template(title: "", doc) = [
+= #title
+#doc
+]
+#show: template.with(..sys.inputs)
+
+Body
+"#
+            .to_string(),
+            source_folder: None,
+            allow_universe_packages: false,
+        };
+
+        let compiled =
+            compile_project_with_inputs(project, inputs).expect("template should compile");
+        assert_eq!(compiled.document.pages.len(), 1);
+    }
+
+    #[test]
+    fn checked_example_compiles_through_an_imported_template() {
+        let source = apply_template_source(
+            "report.typ",
+            "report",
+            include_str!("../examples/template/document.typ"),
+        )
+        .expect("example wrapper should be valid");
+        let mut context_inputs = serde_json::Map::new();
+        context_inputs.insert(
+            "template_data".to_string(),
+            serde_json::json!(include_str!("../examples/template/data.json")),
+        );
+        let inputs =
+            read_template_inputs(&test_context(context_inputs)).expect("example data should parse");
+
+        let engine = TypstEngine::builder()
+            .fonts(typst_assets::fonts())
+            .with_static_source_file_resolver([
+                (file_id(TEMPLATE_ENTRY_FILE), source),
+                (
+                    file_id("report.typ"),
+                    include_str!("../examples/template/report.typ").to_string(),
+                ),
+            ])
+            .build();
+        let warned = engine.compile_with_input(TEMPLATE_ENTRY_FILE, inputs);
+        let document: PagedDocument = warned
+            .output
+            .expect("checked template example should compile through its import");
+
+        assert_eq!(document.pages.len(), 1);
+    }
+
+    #[test]
+    fn apply_template_source_imports_template_function() {
+        let source =
+            apply_template_source("templates/report.typ", "report", "= Body").expect("source");
+
+        assert!(source.contains(r#"#import "templates/report.typ": report as __flowlike_template"#));
+        assert!(source.contains("#show: __flowlike_template.with(..sys.inputs)"));
+        assert!(source.ends_with("= Body"));
+    }
+
+    #[test]
+    fn relative_import_path_is_from_main_file_directory() {
+        let path =
+            relative_import_path("docs/report.typ", "templates/report.typ").expect("relative path");
+
+        assert_eq!(path, "../templates/report.typ");
+    }
+
+    #[test]
+    fn generated_template_entry_does_not_shadow_template() {
+        assert_eq!(
+            generated_template_entry_path("main.typ"),
+            "__flowlike_entry.typ"
+        );
+        assert_eq!(
+            generated_template_entry_path("__flowlike_entry.typ"),
+            "__flowlike_entry_1.typ"
+        );
+    }
+
+    #[test]
+    fn source_template_named_main_uses_a_distinct_entry_path() {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("source".to_string(), serde_json::json!(""));
+        inputs.insert(
+            "source_folder".to_string(),
+            serde_json::to_value(flow_path("project", "store")).unwrap(),
+        );
+        inputs.insert(
+            "template_file".to_string(),
+            serde_json::to_value(flow_path("project/main.typ", "store")).unwrap(),
+        );
+        let ctx = test_context(inputs);
+
+        let project = read_template_source_project(&ctx).expect("project should be valid");
+
+        assert_eq!(project.main_path, "__flowlike_entry.typ");
+        assert!(project
+            .source
+            .starts_with(r#"#import "main.typ": template as __flowlike_template"#));
+    }
+
+    #[test]
+    fn template_source_preserves_explicit_empty_body() {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("source".to_string(), serde_json::json!(""));
+        let ctx = test_context(inputs);
+
+        let project = read_template_source_project(&ctx).expect("project should be valid");
+
+        assert!(project.source.is_empty());
+    }
+
+    #[test]
+    fn malformed_optional_flow_path_is_an_error() {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert(
+            "template_file".to_string(),
+            serde_json::json!("templates/report.typ"),
+        );
+        let ctx = test_context(inputs);
+
+        let error = read_template_source_project(&ctx)
+            .err()
+            .expect("input should be rejected");
+
+        assert!(error.contains("template_file"));
+        assert!(error.contains("deserialize"));
+    }
+
+    #[test]
+    fn malformed_source_folder_is_not_treated_as_absent() {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("source".to_string(), serde_json::json!("= Body"));
+        inputs.insert("source_folder".to_string(), serde_json::json!("project"));
+        let ctx = test_context(inputs);
+
+        let error = read_template_source_project(&ctx)
+            .err()
+            .expect("input should be rejected");
+
+        assert!(error.contains("source_folder"));
+        assert!(error.contains("deserialize"));
+    }
+
+    #[test]
+    fn source_project_rejects_a_malformed_source_folder() {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("source".to_string(), serde_json::json!("= Body"));
+        inputs.insert("source_folder".to_string(), serde_json::json!("project"));
+        let ctx = test_context(inputs);
+
+        let error = read_source_project(&ctx)
+            .err()
+            .expect("input should be rejected");
+
+        assert!(error.contains("source_folder"));
+        assert!(error.contains("deserialize"));
+    }
+
+    #[test]
+    fn explicit_source_folder_preserves_nested_main_path() {
+        let source_file = flow_path("project/docs/main.typ", "store");
+        let source_folder = flow_path("project", "store");
+
+        let (main_path, resolved_folder) =
+            file_project_location(&source_file, Some(source_folder)).expect("valid location");
+
+        assert_eq!(main_path, "docs/main.typ");
+        assert_eq!(resolved_folder.unwrap().path, "project");
+    }
+
+    #[test]
+    fn invalid_source_file_folder_relationship_is_an_error() {
+        let source_file = flow_path("project/docs/main.typ", "store");
+        let source_folder = flow_path("another-project", "store");
+
+        let error = file_project_location(&source_file, Some(source_folder))
+            .expect_err("outside-root source should be rejected");
+
+        assert!(error.contains("must be inside source_folder"));
+    }
+
+    #[test]
+    fn source_file_and_folder_must_share_a_store() {
+        let source_file = flow_path("project/main.typ", "source-store");
+        let source_folder = flow_path("project", "other-store");
+
+        let error = file_project_location(&source_file, Some(source_folder))
+            .expect_err("store mismatch should be rejected");
+
+        assert!(error.contains("same FlowPath store"));
+    }
+
+    #[test]
+    fn absolute_flow_paths_are_rejected() {
+        let error = normalized_flow_path("/project/main.typ", "source_file", false)
+            .expect_err("absolute FlowPath should be rejected");
+
+        assert!(error.contains("relative FlowPath"));
+    }
+
+    #[test]
+    fn typst_identifier_validation_matches_typst_syntax() {
+        assert!(is_typst_identifier("report"));
+        assert!(is_typst_identifier("résumé"));
+        assert!(is_typst_identifier("report-template"));
+        assert!(!is_typst_identifier("_"));
+        assert!(!is_typst_identifier("if"));
+        assert!(!is_typst_identifier("two words"));
     }
 }

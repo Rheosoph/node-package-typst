@@ -1,4 +1,4 @@
-description = "Compile Typst source text into PDF or SVG documents, with FlowLike-backed assets and Typst Universe package resolution"
+description = "Convert Flow-Like Markdown and compile Typst source into PDF or SVG documents"
 id = "com.flow-like.typst"
 keywords = [
     "typst",
@@ -6,12 +6,14 @@ keywords = [
     "svg",
     "document",
     "template",
+    "markdown",
+    "charts",
 ]
 license = "MIT"
 manifest_version = 1
 name = "Typst Documents"
 repository = "https://github.com/flow-like/flow-like-typst-nodes"
-version = "0.1.0"
+version = "0.1.1"
 
 [[authors]]
 name = "Felix Schultz (Rheosoph GmbH)"
@@ -54,39 +56,45 @@ name = "Typst File to PDF + SVG"
 
 [[nodes]]
 category = "Document/Typst"
-description = "Compile Typst template source with JSON data into PDF"
+description = "Convert Flow-Like Markdown into a safe Typst body fragment with static chart support"
+id = "typst_markdown_to_typst"
+name = "Markdown to Typst"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Apply an optional imported Typst template function to source text and write PDF"
 id = "typst_template_to_pdf"
-name = "Typst Template to PDF"
+name = "Typst Source with Template to PDF"
 
 [[nodes]]
 category = "Document/Typst"
-description = "Compile a Typst template file with JSON data into PDF"
+description = "Apply an optional imported Typst template function to a source file and write PDF"
 id = "typst_template_file_to_pdf"
-name = "Typst Template File to PDF"
+name = "Typst File with Template to PDF"
 
 [[nodes]]
 category = "Document/Typst"
-description = "Compile Typst template source with JSON data into SVG"
+description = "Apply an optional imported Typst template function to source text and write SVG"
 id = "typst_template_to_svg"
-name = "Typst Template to SVG"
+name = "Typst Source with Template to SVG"
 
 [[nodes]]
 category = "Document/Typst"
-description = "Compile a Typst template file with JSON data into SVG"
+description = "Apply an optional imported Typst template function to a source file and write SVG"
 id = "typst_template_file_to_svg"
-name = "Typst Template File to SVG"
+name = "Typst File with Template to SVG"
 
 [[nodes]]
 category = "Document/Typst"
-description = "Compile Typst template source with JSON data once into PDF and SVG"
+description = "Apply an optional imported Typst template function to source text and write PDF and SVG"
 id = "typst_template_to_pdf_svg"
-name = "Typst Template to PDF + SVG"
+name = "Typst Source with Template to PDF + SVG"
 
 [[nodes]]
 category = "Document/Typst"
-description = "Compile a Typst template file with JSON data once into PDF and SVG"
+description = "Apply an optional imported Typst template function to a source file and write PDF and SVG"
 id = "typst_template_file_to_pdf_svg"
-name = "Typst Template File to PDF + SVG"
+name = "Typst File with Template to PDF + SVG"
 
 [[nodes]]
 category = "Document/Typst"

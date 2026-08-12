@@ -1,18 +1,70 @@
+use flow_like_typst_nodes as _;
 use flow_like_wasm_sdk::*;
+use std::collections::{BTreeSet, HashSet};
+
+const FLOW_LIKE_TOML: &str = include_str!("../flow-like.toml");
 
 /// Auto-discovers all `#[register_node]` nodes via `inventory`.
-/// Nodes whose `get_node()` panics are silently skipped.
 fn all_package_nodes() -> Vec<NodeDefinition> {
     inventory::iter::<WasmNodeEntry>
         .into_iter()
-        .filter_map(|entry| std::panic::catch_unwind(entry.get_node).ok())
+        .map(|entry| (entry.get_node)())
         .collect()
+}
+
+fn manifest_node_ids() -> Vec<String> {
+    let mut in_node = false;
+    let mut ids = Vec::new();
+
+    for line in FLOW_LIKE_TOML.lines().map(str::trim) {
+        if line.starts_with("[[") {
+            in_node = line == "[[nodes]]";
+            continue;
+        }
+
+        if in_node {
+            if let Some(id) = line
+                .strip_prefix("id = \"")
+                .and_then(|value| value.strip_suffix('"'))
+            {
+                ids.push(id.to_string());
+                in_node = false;
+            }
+        }
+    }
+
+    ids
+}
+
+#[test]
+fn lint_inventory_matches_manifest() {
+    let nodes = all_package_nodes();
+    assert!(
+        !nodes.is_empty(),
+        "no package nodes were linked into the lint test"
+    );
+
+    let inventory_ids: BTreeSet<_> = nodes.iter().map(|node| node.name.as_str()).collect();
+    assert_eq!(
+        inventory_ids.len(),
+        nodes.len(),
+        "inventory contains duplicate node ids"
+    );
+
+    let manifest_ids = manifest_node_ids();
+    let unique_manifest_ids: BTreeSet<_> = manifest_ids.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique_manifest_ids.len(),
+        manifest_ids.len(),
+        "flow-like.toml contains duplicate node ids"
+    );
+    assert_eq!(inventory_ids, unique_manifest_ids);
 }
 
 #[test]
 fn lint_no_duplicate_input_output_pin_names() {
     for node in all_package_nodes() {
-        let input_names: std::collections::HashSet<&str> = node
+        let input_names: HashSet<&str> = node
             .pins
             .iter()
             .filter(|p| p.pin_type == PinType::Input)
@@ -58,7 +110,9 @@ fn lint_struct_pins_have_schema() {
         for pin in &node.pins {
             if pin.data_type == VariableType::Struct {
                 assert!(
-                    pin.schema.as_ref().map_or(false, |s| !s.trim().is_empty()),
+                    pin.schema
+                        .as_ref()
+                        .is_some_and(|schema| !schema.trim().is_empty()),
                     "[{}] Struct pin \"{}\" ({:?}) has no schema",
                     node.name,
                     pin.name,

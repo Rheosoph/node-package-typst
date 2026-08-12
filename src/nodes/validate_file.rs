@@ -43,7 +43,6 @@ impl WasmNode for ValidateTypstFileNode {
             Err(error) => {
                 ctx.set_output("valid", false);
                 ctx.set_output_json("report", &failure_report("typst", &error));
-                ctx.activate_exec("exec_out");
                 return ctx.success();
             }
         };
@@ -51,13 +50,11 @@ impl WasmNode for ValidateTypstFileNode {
             Ok(compiled) => {
                 ctx.set_output("valid", true);
                 ctx.set_output_json("report", &report(&compiled, "typst", 0));
-                ctx.activate_exec("exec_out");
                 ctx.success()
             }
             Err(error) => {
                 ctx.set_output("valid", false);
                 ctx.set_output_json("report", &failure_report("typst", &error));
-                ctx.activate_exec("exec_out");
                 ctx.success()
             }
         }

@@ -1,8 +1,8 @@
 [package]
 name = "flow-like-typst-nodes"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-description = "FlowLike WASM nodes for compiling Typst documents"
+description = "FlowLike WASM nodes for converting Markdown and compiling Typst documents"
 license = "MIT"
 repository = "https://github.com/flow-like/flow-like-typst-nodes"
 keywords = ["flow-like", "wasm", "typst", "pdf", "documents"]
@@ -19,6 +19,7 @@ binstall-tar = "0.4"
 ecow = { version = "=0.2.6", features = ["serde"] }
 flate2 = "1.1"
 flow-like-wasm-sdk = "0.3.6"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 typst = "0.14.2"

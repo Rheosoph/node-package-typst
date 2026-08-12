@@ -3,6 +3,8 @@
 //! Node definitions live in `src/nodes/*`; shared Typst compile/export code
 //! lives in `src/shared.rs`.
 
+mod chart;
+mod markdown;
 mod nodes;
 mod shared;
 
@@ -17,8 +19,8 @@ mod tests {
         CompileTypstSourceToPdfNode, CompileTypstSourceToPdfSvgNode, CompileTypstSourceToSvgNode,
         CompileTypstTemplateFileToPdfNode, CompileTypstTemplateFileToPdfSvgNode,
         CompileTypstTemplateFileToSvgNode, CompileTypstTemplateToPdfNode,
-        CompileTypstTemplateToPdfSvgNode, CompileTypstTemplateToSvgNode, ValidateTypstFileNode,
-        ValidateTypstSourceNode,
+        CompileTypstTemplateToPdfSvgNode, CompileTypstTemplateToSvgNode, MarkdownToTypstNode,
+        ValidateTypstFileNode, ValidateTypstSourceNode,
     };
     use flow_like_wasm_sdk::*;
 
@@ -47,9 +49,37 @@ mod tests {
             .pins
             .iter()
             .any(|pin| pin.name == "template_data" && pin.data_type == VariableType::String));
+        assert!(node.pins.iter().any(|pin| pin.name == "template_file"));
+        assert!(node
+            .pins
+            .iter()
+            .any(|pin| pin.name == "template_function" && pin.data_type == VariableType::String));
         assert!(node.pins.iter().any(|pin| pin.name == "source_folder"));
         assert!(node.permissions.contains(&NodePermission::StorageRead));
         assert!(node.permissions.contains(&NodePermission::StorageWrite));
+    }
+
+    #[test]
+    fn markdown_to_typst_node_definition() {
+        let node = MarkdownToTypstNode.get_node();
+        assert_eq!(node.name, "typst_markdown_to_typst");
+        assert_eq!(node.category, "Document/Typst");
+        assert!(!node.description.trim().is_empty());
+        assert!(node.pins.iter().any(|pin| {
+            pin.name == "markdown"
+                && pin.pin_type == PinType::Input
+                && pin.data_type == VariableType::String
+        }));
+        assert!(node.pins.iter().any(|pin| {
+            pin.name == "typst_source"
+                && pin.pin_type == PinType::Output
+                && pin.data_type == VariableType::String
+        }));
+        assert!(!node
+            .pins
+            .iter()
+            .any(|pin| pin.data_type == VariableType::Execution));
+        assert!(node.permissions.is_empty());
     }
 
     #[test]
@@ -226,5 +256,29 @@ mod tests {
         assert!(node.pins.iter().any(|pin| pin.name == "valid"));
         assert!(node.permissions.contains(&NodePermission::StorageRead));
         assert!(!node.permissions.contains(&NodePermission::StorageWrite));
+    }
+
+    #[test]
+    fn successful_node_execution_activates_exec_out_once() {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("source".to_string(), json!("Hello from Typst"));
+        inputs.insert("allow_universe_packages".to_string(), json!(false));
+        let ctx = Context::from_input(ExecutionInput {
+            inputs,
+            node_id: "test-node".to_string(),
+            run_id: "test-run".to_string(),
+            app_id: "test-app".to_string(),
+            board_id: "test-board".to_string(),
+            user_id: "test-user".to_string(),
+            stream_state: false,
+            log_level: 0,
+            node_name: "typst_validate_source".to_string(),
+        });
+
+        let result = ValidateTypstSourceNode.run(ctx);
+
+        assert!(result.error.is_none());
+        assert_eq!(result.activate_exec, vec!["exec_out"]);
+        assert_eq!(result.outputs.get("valid"), Some(&json!(true)));
     }
 }

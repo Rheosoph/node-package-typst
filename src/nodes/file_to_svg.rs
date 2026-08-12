@@ -77,7 +77,6 @@ impl WasmNode for CompileTypstFileToSvgNode {
         }
 
         ctx.set_output_json("report", &report(&compiled, "svg", svg.len()));
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }

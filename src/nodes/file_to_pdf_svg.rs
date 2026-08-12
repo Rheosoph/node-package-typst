@@ -1,3 +1,4 @@
+use crate::nodes::read_pdf_svg_output_files;
 use crate::shared::*;
 use flow_like_wasm_sdk::*;
 
@@ -49,6 +50,14 @@ impl WasmNode for CompileTypstFileToPdfSvgNode {
     }
 
     fn run(&self, mut ctx: Context) -> ExecutionResult {
+        let (pdf_output_file, svg_output_file) = match read_pdf_svg_output_files(&ctx) {
+            Ok(output_files) => output_files,
+            Err(error) => {
+                ctx.set_output_json("report", &failure_report("pdf+svg", &error));
+                return ctx.fail(error);
+            }
+        };
+
         let project = match read_file_project(&ctx) {
             Ok(project) => project,
             Err(error) => {
@@ -74,21 +83,6 @@ impl WasmNode for CompileTypstFileToPdfSvgNode {
         let padding_pt = ctx.get_f64("padding_pt").unwrap_or(0.0);
         let svg = export_svg(&compiled, padding_pt);
 
-        let pdf_output_file = match read_flow_path_pin(&ctx, "pdf_output_file") {
-            Ok(output_file) => output_file,
-            Err(error) => {
-                ctx.set_output_json("report", &failure_report("pdf+svg", &error));
-                return ctx.fail(error);
-            }
-        };
-        let svg_output_file = match read_flow_path_pin(&ctx, "svg_output_file") {
-            Ok(output_file) => output_file,
-            Err(error) => {
-                ctx.set_output_json("report", &failure_report("pdf+svg", &error));
-                return ctx.fail(error);
-            }
-        };
-
         if let Err(error) = write_output(&ctx, &pdf_output_file, &pdf) {
             ctx.set_output_json("report", &failure_report("pdf+svg", &error));
             return ctx.fail(error);
@@ -104,7 +98,6 @@ impl WasmNode for CompileTypstFileToPdfSvgNode {
             "report",
             &report(&compiled, "pdf+svg", pdf.len() + svg.len()),
         );
-        ctx.activate_exec("exec_out");
         ctx.success()
     }
 }
