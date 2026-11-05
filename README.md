@@ -1,9 +1,11 @@
 # FlowLike Typst Nodes
 
+Package version: `0.4.0`.
+
 WASM node package for compiling Typst documents inside FlowLike workflows.
-The package compiles Typst source text into PDF/SVG artifacts, resolves relative
-imports/assets from a FlowLike source folder, and returns structured compile
-metadata.
+The package compiles Typst source text into PDF/SVG/PNG artifacts, resolves
+relative imports/assets from a FlowLike source folder and ordered asset roots,
+and returns structured compile metadata.
 
 ## Nodes
 
@@ -15,6 +17,8 @@ Implemented in this package:
 | `Typst File to PDF` | Read a `.typ` file from FlowLike storage and compile it into PDF. |
 | `Typst Source to SVG` | Compile Typst source text into SVG and write the SVG to an output `FlowPath`. |
 | `Typst File to SVG` | Read a `.typ` file from FlowLike storage and compile it into SVG. |
+| `Typst Source to PNG` | Compile Typst source text into a PNG image and write it to an output `FlowPath`. |
+| `Typst File to PNG` | Read a `.typ` file from FlowLike storage and compile it into a PNG image. |
 | `Typst Source to PDF + SVG` | Compile Typst source text once and write both output formats. |
 | `Typst File to PDF + SVG` | Read a `.typ` file, compile once, and write both output formats. |
 | `Markdown to Typst` | Convert Flow-Like Markdown into a safe, styleable Typst body fragment, including static Nivo and Plotly charts. |
@@ -22,6 +26,8 @@ Implemented in this package:
 | `Typst File with Template to PDF` | Read a `.typ` document file, apply an optional imported `.typ` template function, and write PDF. |
 | `Typst Source with Template to SVG` | Apply an optional imported `.typ` template function to source text and write SVG. |
 | `Typst File with Template to SVG` | Read a `.typ` document file, apply an optional imported `.typ` template function, and write SVG. |
+| `Typst Source with Template to PNG` | Apply an optional imported `.typ` template function to source text and write a PNG image. |
+| `Typst File with Template to PNG` | Read a `.typ` document file, apply an optional imported `.typ` template function, and write a PNG image. |
 | `Typst Source with Template to PDF + SVG` | Apply an optional imported `.typ` template function to source text and write both output formats. |
 | `Typst File with Template to PDF + SVG` | Read a `.typ` document file, apply an optional imported `.typ` template function, and write both output formats. |
 | `Validate Typst Source` | Compile Typst source text without exporting, returning success, page count, and warnings. |
@@ -39,10 +45,52 @@ Primary pins:
 | `template_function` | `string` | Exported function name to import from `template_file`. Defaults to `template`. |
 | `template_data` | `string` | JSON object exposed to template functions as named arguments through Typst `sys.inputs`. |
 | `source_folder` | `FlowPath` | Folder used as the root for relative imports and assets referenced by `source`. |
-| `output_file` | `FlowPath` | PDF/SVG file to write. Compile nodes always write to this path. |
+| `asset_roots` | `FlowPath[]` | Optional fallback folders searched after `source_folder`, in array order; the first readable match wins. Defaults to an empty array. |
+| `font_files` | `FlowPath[]` | Optional font files loaded before compilation or validation. Accepts TTF, OTF, and TTC files; defaults to an empty array. |
+| `output_file` | `FlowPath` | PDF/SVG/PNG file to write. Compile nodes always write to this path. |
+| `ppi` | `float` | PNG resolution in pixels per inch. Defaults to `144`; `72` renders one pixel per Typst point. |
+| `page` | `integer` | 1-based page rendered by PNG nodes. Defaults to `1`; `0` stacks all pages vertically into one image. |
 | `pdf_output_file` | `FlowPath` | PDF output path for the `PDF + SVG` nodes. |
 | `svg_output_file` | `FlowPath` | SVG output path for the `PDF + SVG` nodes. |
 | `allow_universe_packages` | `bool` | Enables `@preview/...` Typst Universe package downloads through FlowLike host HTTP. Defaults to `true`; displayed as `Packages`. |
+
+## Custom fonts
+
+All compile and validation nodes accept an optional `font_files` array:
+
+1. Upload the font files to FlowLike storage.
+2. Connect their file `FlowPath` handles as an array to `font_files`.
+3. Select the font by its family name in Typst:
+
+   ```typst
+   #set text(font: "Inter Tight")
+   #text(weight: 600)[Flow Like]
+   #text(weight: 900)[10 AI AGENTS]
+   ```
+
+For the Flow Like thumbnail, supply static Inter Tight SemiBold (600) and Black
+(900) font files. Static files provide predictable weight selection with the
+bundled Typst 0.14.2 engine; do not assume a variable font exposes every weight.
+
+Fonts are registered before compilation, including all supported faces in a TTC
+collection. The bundled Libertinus Serif, New Computer Modern, and DejaVu Sans
+Mono fonts remain available. An empty or unconnected `font_files` input uses
+only those bundled fonts.
+
+Each font is read directly through its FlowPath. It can be outside
+`source_folder` or use a different storage backend. The node does not scan
+`source_folder` for fonts or download them automatically. Uploading a font
+beside a `.typ` file, or reading it with Typst's `read(...)`, does not register
+it; connect it to `font_files`.
+
+The local Typst CLI uses a separate mechanism:
+
+```sh
+typst compile --font-path fonts --ppi 72 thumbnail.typ preview.png
+```
+
+That command scans a local `fonts` directory. Its flags, including commands
+written in template comments, have no effect on FlowLike nodes.
 
 ## Model-generated Markdown bodies
 
@@ -75,8 +123,8 @@ emphasis, strikethrough, inline and fenced code, nested ordered/unordered/task
 lists, links, relative images, aligned GFM tables, blockquotes, alerts,
 horizontal rules, footnotes, and visual line breaks. Remote Markdown images are
 rendered as links because the Typst project resolver does not fetch arbitrary
-HTTP image URLs; relative images continue to work when `source_folder` contains
-the asset.
+HTTP image URLs; relative images continue to work when `source_folder` or an
+`asset_roots` folder contains the asset.
 
 Fenced `nivo` and `plotly` blocks accept the same two forms as Flow-Like's
 Markdown renderer:
@@ -106,8 +154,39 @@ See the [example gallery](examples/README.md) for standalone Markdown,
 Flow-Like Nivo and Plotly configurations, user-owned Format String layouts, an
 imported Typst template, and their checked-in Typst, PDF, and SVG outputs.
 
-When `source_folder` is omitted for `Typst File to PDF`, relative files resolve
-from the parent folder of `source_file`.
+## Asset roots
+
+All compile and validation nodes accept an optional `asset_roots` array of
+folder FlowPaths, including source, file, and template variants for every
+output format. Lookup checks `source_folder` first, then each `asset_roots`
+folder in array order, and stops at the first readable match. An empty or
+unconnected array preserves the existing source-folder behavior.
+
+For example, connect `source_folder` to `reports`, and connect the folder
+FlowPaths for `brand-assets` and `shared-assets` to `asset_roots` in that order.
+For an inline source containing `#image("images/logo.png")`, lookup tries:
+
+1. `reports/images/logo.png`
+2. `brand-assets/images/logo.png`
+3. `shared-assets/images/logo.png`
+
+Each root may use a different storage backend and may be outside
+`source_folder`. Inline source can use `asset_roots` without a `source_folder`;
+lookup then starts at the first array entry. The same lookup supports images,
+data files, bibliographies, and local Typst imports. Typst Universe package
+files are resolved separately, and fonts still need to be connected through
+`font_files`.
+
+Every root receives the same normalized, project-relative Typst path. A
+reference to `images/logo.png` from `chapters/intro.typ` therefore searches
+`chapters/images/logo.png` under each root. Use `/images/logo.png` to start at
+each root instead. Imports found through an asset root follow the same rules
+for their own relative references; lookup always retains the configured root
+order.
+
+When `source_folder` is omitted for a file node, relative files resolve
+from the parent folder of `source_file`, or from the storage root when
+`source_file` is stored at the root.
 
 When `source_folder` points to:
 
@@ -262,8 +341,8 @@ safely be named `main.typ`.
 
 ### Source with Template or File with Template?
 
-All six template nodes apply data in the same way. Choose the input style first,
-then PDF, SVG, or both:
+All eight template nodes apply data in the same way. Choose the input style
+first, then PDF, SVG, PNG, or PDF + SVG:
 
 | Input style | Body comes from | Best for |
 | --- | --- | --- |
@@ -271,7 +350,11 @@ then PDF, SVG, or both:
 | File with Template | The `.typ` file selected by `source_file` | Documents and multi-file projects kept in FlowLike storage. |
 
 The combined PDF + SVG variant uses `pdf_output_file` and `svg_output_file`;
-the single-format variants use `output_file`.
+the single-format variants use `output_file`. PNG variants also take `ppi` and
+`page`; a 1280×720pt page exported at `72` PPI becomes a 1280×720 pixel image.
+A PNG must fit in the package's 128 MB memory tier, which allows about 5
+megapixels per image: up to 170 PPI for a 1280×720pt page, or 230 PPI for A4.
+Larger requests fail with the highest PPI that fits.
 
 ### Template reference
 
@@ -335,8 +418,10 @@ separate from its content.
 
 #### Project roots and paths
 
-`source_folder` is the Typst project root and file-access boundary. For
-predictable multi-file projects, connect it explicitly:
+`source_folder` defines the project layout and is the first location checked
+for paths referenced by Typst source. Optional `asset_roots` provide additional
+read roots in array order. For predictable multi-file projects, connect
+`source_folder` explicitly:
 
 - `source_file` and `template_file` must be inside `source_folder` and use the
   same FlowLike storage backend as it.
@@ -349,32 +434,51 @@ predictable multi-file projects, connect it explicitly:
   `templates/report.typ` resolves from the `templates` folder.
 - A leading `/` in Typst code means the project root, not the operating-system
   root. With the root above, `image("/assets/logo.svg")` starts at
-  `reports/quarterly`.
+  `reports/quarterly`, then tries `assets/logo.svg` under each `asset_roots`
+  folder if needed.
+- `asset_roots` may be outside `source_folder` and use different storage
+  backends. They do not change the location requirements for the explicit
+  `source_file` and `template_file` pins.
 - `output_file` is not part of Typst's read root and may be any writable
   FlowPath.
+- `font_files` are explicit file handles and do not need to be inside
+  `source_folder` or use its storage backend.
 
-If `source_folder` is omitted, a file node normally uses the parent of
-`source_file`; an inline template node can use the parent of `template_file`.
-That default is convenient only when all referenced files are below that
-folder. When body, template, or assets are in sibling folders, select their
-common parent explicitly.
+If `source_folder` is omitted, a file node uses the parent of `source_file`
+(or the storage root for a file stored at the root); an inline template node
+can use the parent of `template_file`.
+The inferred folder is also searched before `asset_roots`. When body and
+template are in sibling folders, select their common parent explicitly.
+Assets in other folders can be supplied through `asset_roots`.
 
 An empty body is valid: use it when the template itself produces all visible
 content.
 
 #### Common errors
 
+Compile errors and warnings name the Typst file, line, and column, for example
+`main.typ:33:15: error: failed to load file (...)`. Lines count from the start
+of your own source; the import and show rule a template node adds are reported
+as `(generated template import)`, and an inline body passed to a template node
+is named `source`. Errors that Typst does not tie to a position, such as some
+package errors, name only the file.
+
 | Error or symptom | Fix |
 | --- | --- |
+| `X could not be read from source_folder at FlowLike path "..."` | Upload the file to that FlowLike path, point `source_folder` at the folder that contains it, or add a matching folder to `asset_roots`. Projects copied from the Typst web app need their images and data files uploaded too, in the same folder layout. |
+| No source folder or asset roots are connected | Connect `source_folder` or an `asset_roots` array to the folders that hold the files your source references. |
+| Warning `unknown font family: ...` | Upload the required font and connect its FlowPath to `font_files`. Use its family name in `text(font: ...)`; for example, Inter and Inter Tight are different families. Without the requested font, Typst falls back and text measurements can change. |
 | `template_data must be valid JSON` | Use double quotes, remove trailing commas/comments, and validate the JSON string. |
 | `template_data must be a JSON object` | Wrap the data in `{ ... }`; a top-level array or scalar is not accepted. |
 | Typst reports `unexpected argument: ...` | Remove that JSON key or add a matching named parameter to the template function. The example's `draft` key is accepted by `draft: false`. |
 | The imported function is missing | Make `template_function` exactly match an exported `#let` name in `template_file`; it defaults to `template`. |
 | `source_file and template_file must refer to different files` | Keep the reusable template module and document body in separate `.typ` files. |
 | A template or source path is outside the root, or uses a different store | Select a common `source_folder` and recreate all project FlowPaths from the same storage backend. |
-| An image, bibliography, CSV, or import cannot be found | Resolve a relative path from the file that contains it, or use a `/project-root-relative` Typst path. |
+| An image, bibliography, CSV, or import cannot be found | Resolve a relative path from the file that contains it, or use a `/project-root-relative` Typst path. That same path is searched under `source_folder` and each `asset_roots` folder. |
 | The template appears twice | Remove any manual template `#show` rule from the body; the template node inserts one. |
-| An `@preview/...` package cannot be fetched | Enable `allow_universe_packages` and grant the workflow outbound HTTP, or remove the package import. |
+| `a PNG at N ppi needs about N MB ...; use at most N ppi` | Lower `ppi` to the suggested value, or set `page` to one page instead of `0`. |
+| `a tiling tile is smaller than one pixel` or `text filled with a tiling cannot be rendered` | Raise `ppi`, or change the tiling's size so it covers whole pixels at that PPI. |
+| An `@preview/...` package cannot be fetched, or `allow_universe_packages is disabled` | Enable `allow_universe_packages` and grant the workflow outbound HTTP, or remove the package import. |
 
 #### Official Typst documentation and GitHub examples
 
@@ -406,6 +510,7 @@ the Typst CLI:
 | `typst-assets` | Embedded default fonts for sandboxed compilation. |
 | `typst-pdf` | PDF export. |
 | `typst-svg` | SVG export. |
+| `typst-render` | PNG export. |
 
 Typst Universe `@preview/...` packages are resolved through FlowLike host HTTP,
 not the native Typst package cache. This keeps the WASM node aligned with
@@ -417,10 +522,9 @@ High-value follow-up nodes:
 
 | Node | Why |
 | --- | --- |
-| `Typst Source to PNG` | Render page images with `typst-render` for previews and thumbnails. |
 | `Typst Package Cache` | Persist approved Typst Universe packages through FlowLike storage so repeated runs do not need another network download. |
 | `Typst Project Bundle to PDF` | Compile a whole project from a directory `FlowPath`, preserving relative imports and assets. |
-| `Typst Diagnostics` | Return structured source spans and hints instead of debug-formatted warnings. |
+| `Typst Diagnostics` | Return diagnostics as structured data (file, line, column, hints) instead of formatted strings. |
 | `Typst HTML Export` | Add HTML output when Typst's HTML export is stable enough for this runtime. |
 
 Useful Typst Universe package categories for FlowLike automations:

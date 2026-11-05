@@ -1291,7 +1291,9 @@ mod tests {
             main_path: MAIN_FILE.to_string(),
             source: source.clone(),
             source_folder: None,
+            asset_roots: Vec::new(),
             allow_universe_packages: false,
+            fonts: Vec::new(),
         };
         compile_project(project).unwrap_or_else(|error| {
             panic!("generated Typst did not compile:\n{source}\n\n{error}")
@@ -1476,7 +1478,9 @@ fn main() { println!("safe"); }
             main_path: MAIN_FILE.to_string(),
             source: source.clone(),
             source_folder: None,
+            asset_roots: Vec::new(),
             allow_universe_packages: false,
+            fonts: Vec::new(),
         })
         .unwrap_or_else(|error| {
             panic!("styled Markdown document did not compile:\n{source}\n\n{error}")

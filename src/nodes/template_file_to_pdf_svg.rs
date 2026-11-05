@@ -20,6 +20,8 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
         add_template_function_pin(&mut node);
         add_template_data_pin(&mut node);
         add_source_folder_pin(&mut node);
+        add_asset_roots_pin(&mut node);
+        add_font_files_pin(&mut node);
         add_package_pin(&mut node);
         add_svg_padding_pin(&mut node);
         add_pdf_svg_output_file_pins(&mut node);
@@ -77,7 +79,7 @@ impl WasmNode for CompileTypstTemplateFileToPdfSvgNode {
             }
         };
 
-        let compiled = match compile_project_with_inputs(project, inputs) {
+        let compiled = match compile_template_project(project, inputs) {
             Ok(compiled) => compiled,
             Err(error) => {
                 ctx.set_output_json("report", &failure_report("pdf+svg", &error));

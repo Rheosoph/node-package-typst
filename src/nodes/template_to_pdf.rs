@@ -19,6 +19,8 @@ impl WasmNode for CompileTypstTemplateToPdfNode {
         add_template_function_pin(&mut node);
         add_template_data_pin(&mut node);
         add_source_folder_pin(&mut node);
+        add_asset_roots_pin(&mut node);
+        add_font_files_pin(&mut node);
         add_package_pin(&mut node);
         add_output_file_pin(&mut node, "FlowPath file where the PDF will be written");
         node.add_output_pin(
@@ -59,7 +61,7 @@ impl WasmNode for CompileTypstTemplateToPdfNode {
                 return ctx.fail(error);
             }
         };
-        let compiled = match compile_project_with_inputs(project, inputs) {
+        let compiled = match compile_template_project(project, inputs) {
             Ok(compiled) => compiled,
             Err(error) => {
                 ctx.set_output_json("report", &failure_report("pdf", &error));

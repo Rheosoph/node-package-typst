@@ -16,6 +16,8 @@ impl WasmNode for ValidateTypstSourceNode {
         node.add_input_pin("exec", "Exec", "Trigger pin", VariableType::Execution);
         add_source_pin(&mut node);
         add_source_folder_pin(&mut node);
+        add_asset_roots_pin(&mut node);
+        add_font_files_pin(&mut node);
         add_package_pin(&mut node);
         node.add_output_pin(
             "exec_out",

@@ -143,6 +143,116 @@ fn lint_no_root_array_schemas() {
 }
 
 #[test]
+fn lint_compiler_nodes_accept_font_files() {
+    let flow_path_schema = serde_json::to_value(schemars::schema_for!(FlowPath))
+        .expect("FlowPath schema must serialize");
+
+    for node in all_package_nodes() {
+        let font_pins: Vec<_> = node
+            .pins
+            .iter()
+            .filter(|pin| pin.name == "font_files")
+            .collect();
+
+        if node.name == "typst_markdown_to_typst" {
+            assert!(
+                font_pins.is_empty(),
+                "Markdown conversion does not load fonts"
+            );
+            continue;
+        }
+
+        assert_eq!(
+            font_pins.len(),
+            1,
+            "[{}] must expose one font_files pin",
+            node.name
+        );
+        let pin = font_pins[0];
+        assert_eq!(pin.pin_type, PinType::Input, "[{}]", node.name);
+        assert_eq!(pin.data_type, VariableType::Struct, "[{}]", node.name);
+        assert_eq!(pin.value_type, Some(ValueType::Array), "[{}]", node.name);
+        assert_eq!(
+            pin.default_value,
+            Some(json!([])),
+            "[{}] font_files must be optional",
+            node.name
+        );
+        let schema: serde_json::Value = serde_json::from_str(
+            pin.schema
+                .as_deref()
+                .expect("font_files must have a FlowPath schema"),
+        )
+        .expect("font_files schema must be valid JSON");
+        assert_eq!(
+            schema, flow_path_schema,
+            "[{}] font_files schema must describe one FlowPath",
+            node.name
+        );
+        assert!(
+            node.permissions.contains(&NodePermission::StorageRead),
+            "[{}] must be allowed to read font files",
+            node.name
+        );
+    }
+}
+
+#[test]
+fn lint_compiler_nodes_accept_asset_roots() {
+    let flow_path_schema = serde_json::to_value(schemars::schema_for!(FlowPath))
+        .expect("FlowPath schema must serialize");
+
+    for node in all_package_nodes() {
+        let asset_pins: Vec<_> = node
+            .pins
+            .iter()
+            .filter(|pin| pin.name == "asset_roots")
+            .collect();
+
+        if node.name == "typst_markdown_to_typst" {
+            assert!(
+                asset_pins.is_empty(),
+                "Markdown conversion does not resolve assets"
+            );
+            continue;
+        }
+
+        assert_eq!(
+            asset_pins.len(),
+            1,
+            "[{}] must expose one asset_roots pin",
+            node.name
+        );
+        let pin = asset_pins[0];
+        assert_eq!(pin.pin_type, PinType::Input, "[{}]", node.name);
+        assert_eq!(pin.data_type, VariableType::Struct, "[{}]", node.name);
+        assert_eq!(pin.value_type, Some(ValueType::Array), "[{}]", node.name);
+        assert_eq!(
+            pin.default_value,
+            Some(json!([])),
+            "[{}] asset_roots must be optional",
+            node.name
+        );
+        let schema: serde_json::Value = serde_json::from_str(
+            pin.schema
+                .as_deref()
+                .expect("asset_roots must have a FlowPath schema"),
+        )
+        .expect("asset_roots schema must be valid JSON");
+        assert_eq!(
+            schema, flow_path_schema,
+            "[{}] asset_roots schema must describe one FlowPath",
+            node.name
+        );
+        assert!(
+            node.permissions.contains(&NodePermission::StorageRead),
+            "[{}] must be allowed to read assets",
+            node.name
+        );
+    }
+}
+
+#[test]
 fn lint_every_node_has_description_and_category() {
     for node in all_package_nodes() {
         assert!(
@@ -183,6 +293,48 @@ fn lint_no_pathbuf_pins() {
                 "[{}] Pin \"{}\" uses PathBuf type — use FlowPath (Struct) instead",
                 node.name,
                 pin.name
+            );
+        }
+    }
+}
+
+/// Whether the manifest declares a node permission. TEMPORARY, together with
+/// the capability flags in flow-like.toml: FlowLike Studio 0.1.12 strips node
+/// permissions the manifest does not repeat, and older registries list
+/// capabilities from the manifest. Newer hosts derive both from the nodes.
+fn manifest_grants(permissions: &toml::Value, permission: &NodePermission) -> bool {
+    let flag = |section: &str, key: &str| {
+        permissions
+            .get(section)
+            .and_then(|section| section.get(key))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+    };
+
+    match permission {
+        NodePermission::NetworkHttp => flag("network", "http_enabled"),
+        NodePermission::StorageRead | NodePermission::StorageWrite => {
+            flag("filesystem", "node_storage") || flag("filesystem", "user_storage")
+        }
+        other => panic!("add the flow-like.toml permission that grants {other:?}"),
+    }
+}
+
+#[test]
+fn lint_manifest_declares_every_node_permission() {
+    let manifest: toml::Table = FLOW_LIKE_TOML
+        .parse()
+        .expect("flow-like.toml must be valid TOML");
+    let permissions = manifest
+        .get("permissions")
+        .expect("flow-like.toml needs a [permissions] table");
+
+    for node in all_package_nodes() {
+        for permission in &node.permissions {
+            assert!(
+                manifest_grants(permissions, permission),
+                "[{}] declares {permission:?}, but flow-like.toml does not declare it, so the store listing would hide it",
+                node.name
             );
         }
     }

@@ -21,6 +21,10 @@ const FONT_TICK: f64 = 12.0;
 const FONT_LEGEND: f64 = 12.5;
 const FONT_AXIS: f64 = 13.0;
 const FONT_LABEL: f64 = 12.0;
+const PIE_INNER_RATIO: f64 = 0.64;
+const PIE_SLICE_GAP: f64 = 0.024;
+const PIE_SIDE_LEGEND_GAP: f64 = 30.0;
+const PIE_DATA_RAIL_WIDTH: f64 = 202.0;
 const DEFAULT_COLORS: &[&str] = &[
     "#fb562d", "#8b61e3", "#09aeae", "#eba42c", "#2b7ad6", "#42aa60", "#da529c", "#62778d",
 ];
@@ -1906,14 +1910,14 @@ fn render_svg(chart: &Chart) -> String {
     );
     let _ = write!(
         svg,
-        r##"<rect x="0.5" y="0.5" width="799" height="{:.1}" rx="12" fill="#ffffff" stroke="#d8dee9"/>"##,
+        r##"<rect x="0.5" y="0.5" width="799" height="{:.1}" rx="12" fill="#ffffff" stroke="#e7e5e4"/>"##,
         height - 1.0
     );
     // SVG presentation attributes are used instead of a <style> element so
     // the image remains friendly to conservative Typst/SVG backends.
     let mut top = 27.0;
     if let Some(title) = &chart.title {
-        svg_text(&mut svg, 28.0, top, 19.0, "#172033", "start", title, true);
+        svg_text(&mut svg, 28.0, top, 19.0, "#292524", "start", title, true);
         top += 30.0;
     }
 
@@ -1932,7 +1936,7 @@ fn render_svg(chart: &Chart) -> String {
         height: (height - top - bottom).max(24.0),
     };
     let side_legend_reserve = if chart.kind == Kind::Pie {
-        232.0
+        PIE_SIDE_LEGEND_GAP + PIE_DATA_RAIL_WIDTH
     } else {
         120.0
     };
@@ -1981,33 +1985,289 @@ fn render_svg(chart: &Chart) -> String {
                 LegendLayout::horizontal(28.0, height - 29.0, 744.0),
             ),
             LegendPosition::Left => {
-                let (legend_y, row_gap) = side_legend_layout(chart, plot, legend_items.len());
-                render_legend(
-                    &mut svg,
-                    chart,
-                    &legend_items,
-                    LegendLayout::vertical(24.0, legend_y, side_legend_reserve - 38.0, row_gap),
-                );
+                if chart.kind == Kind::Pie {
+                    render_pie_data_rail(&mut svg, chart, plot);
+                } else {
+                    let (legend_y, row_gap) = side_legend_layout(chart, plot, legend_items.len());
+                    render_legend(
+                        &mut svg,
+                        chart,
+                        &legend_items,
+                        LegendLayout::vertical(
+                            side_legend_x(chart, plot, side_legend_reserve - 38.0),
+                            legend_y,
+                            side_legend_reserve - 38.0,
+                            row_gap,
+                        ),
+                    );
+                }
             }
             LegendPosition::Right => {
-                let (legend_y, row_gap) = side_legend_layout(chart, plot, legend_items.len());
-                render_legend(
-                    &mut svg,
-                    chart,
-                    &legend_items,
-                    LegendLayout::vertical(
-                        plot.x + plot.width + 18.0,
-                        legend_y,
-                        side_legend_reserve - 38.0,
-                        row_gap,
-                    ),
-                );
+                if chart.kind == Kind::Pie {
+                    render_pie_data_rail(&mut svg, chart, plot);
+                } else {
+                    let (legend_y, row_gap) = side_legend_layout(chart, plot, legend_items.len());
+                    render_legend(
+                        &mut svg,
+                        chart,
+                        &legend_items,
+                        LegendLayout::vertical(
+                            side_legend_x(chart, plot, side_legend_reserve - 38.0),
+                            legend_y,
+                            side_legend_reserve - 38.0,
+                            row_gap,
+                        ),
+                    );
+                }
             }
         }
     }
 
     svg.push_str("</svg>");
     svg
+}
+
+fn side_legend_x(chart: &Chart, plot: PlotBox, legend_width: f64) -> f64 {
+    if chart.kind != Kind::Pie {
+        return match chart.legend_position {
+            LegendPosition::Left => 24.0,
+            LegendPosition::Right => plot.x + plot.width + 18.0,
+            LegendPosition::Top | LegendPosition::Bottom => plot.x,
+        };
+    }
+
+    // Treat the ring and side legend as one centered composition. The plot box
+    // still reserves enough room for long labels, but the legend begins just
+    // beyond the ring instead of at the far edge of that reservation. This
+    // removes the large dead zone that otherwise makes the key look detached.
+    let geometry = pie_geometry(plot);
+    match chart.legend_position {
+        LegendPosition::Left => geometry.cx - geometry.radius - PIE_SIDE_LEGEND_GAP - legend_width,
+        LegendPosition::Right => geometry.cx + geometry.radius + PIE_SIDE_LEGEND_GAP,
+        LegendPosition::Top | LegendPosition::Bottom => plot.x,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PieDataRailLayout {
+    x: f64,
+    y: f64,
+    width: f64,
+    header_height: f64,
+    row_height: f64,
+    label_size: f64,
+    detail_size: f64,
+    expanded: bool,
+}
+
+fn pie_data_rail_layout(chart: &Chart, plot: PlotBox) -> PieDataRailLayout {
+    let count = chart.slices.len().max(1);
+    let outer_padding = 6.0_f64.min(plot.height * 0.04);
+    let available = (plot.height - outer_padding * 2.0).max(1.0);
+    // The SVG is scaled down to the document's content width by Typst. Keep
+    // the relaxed rail large enough that its exported text remains at normal
+    // body-copy size instead of becoming a miniature chart annotation.
+    let candidate_header_height = 26.0;
+    let row_with_header = (available - candidate_header_height) / count as f64;
+    let header_height = if row_with_header >= 14.0 {
+        candidate_header_height
+    } else {
+        0.0
+    };
+    let row_height = ((available - header_height) / count as f64).clamp(f64::EPSILON, 40.0);
+    let used_height = header_height + row_height * count as f64;
+    let expanded = row_height >= 30.0;
+    let label_size = if expanded {
+        15.0
+    } else {
+        (row_height * 0.62).min(13.5)
+    };
+    let detail_size = if expanded {
+        14.6
+    } else {
+        (row_height * 0.58).min(13.0)
+    };
+
+    PieDataRailLayout {
+        x: side_legend_x(chart, plot, PIE_DATA_RAIL_WIDTH),
+        y: plot.y + (plot.height - used_height) / 2.0,
+        width: PIE_DATA_RAIL_WIDTH,
+        header_height,
+        row_height,
+        label_size,
+        detail_size,
+        expanded,
+    }
+}
+
+fn render_pie_data_rail(svg: &mut String, chart: &Chart, plot: PlotBox) {
+    let layout = pie_data_rail_layout(chart, plot);
+    let PieDataRailLayout {
+        x,
+        y,
+        width,
+        header_height,
+        row_height,
+        label_size,
+        detail_size,
+        expanded,
+    } = layout;
+    let rail_on_left = chart.legend_position == LegendPosition::Right;
+    let rail_x = if rail_on_left { x } else { x + width - 3.0 };
+    let text_start = if rail_on_left { x + 13.0 } else { x };
+    let text_end = if rail_on_left {
+        x + width
+    } else {
+        x + width - 13.0
+    };
+    let share_x = text_end;
+    let value_x = share_x - 48.0;
+
+    if header_height > 0.0 {
+        svg_text(
+            svg,
+            text_start,
+            y + 16.0,
+            14.6,
+            "#78716c",
+            "start",
+            "BREAKDOWN",
+            true,
+        );
+        svg_text(
+            svg,
+            value_x,
+            y + 16.0,
+            14.6,
+            "#78716c",
+            "end",
+            "VALUE",
+            true,
+        );
+        svg_text(
+            svg,
+            share_x,
+            y + 16.0,
+            14.6,
+            "#78716c",
+            "end",
+            "SHARE",
+            true,
+        );
+        let _ = write!(
+            svg,
+            r##"<line x1="{text_start:.1}" y1="{:.1}" x2="{text_end:.1}" y2="{:.1}" stroke="#d6d3d1" stroke-width="0.9"/>"##,
+            y + header_height - 3.0,
+            y + header_height - 3.0,
+        );
+    }
+
+    let total: f64 = chart.slices.iter().map(|(_, value)| value.max(0.0)).sum();
+    for (index, (name, value)) in chart.slices.iter().enumerate() {
+        let row_y = y + header_height + index as f64 * row_height;
+        let percentage = if total > 0.0 {
+            value.max(0.0) / total * 100.0
+        } else {
+            0.0
+        };
+        let formatted_value = format_tick(*value);
+        let formatted_share = format!("{percentage:.0}%");
+        let _ = write!(
+            svg,
+            "<g><title>{}: {} ({percentage:.1}%)</title>",
+            xml_escape(name),
+            xml_escape(&format_tick(*value)),
+        );
+        let rail_inset = (row_height * 0.20).clamp(1.0, 6.0);
+        let rail_height = (row_height - rail_inset * 2.0).max(0.6);
+        let _ = write!(
+            svg,
+            r##"<rect x="{rail_x:.1}" y="{:.1}" width="3" height="{rail_height:.1}" rx="1.5" fill="{}"/>"##,
+            row_y + rail_inset,
+            chart.color(index),
+        );
+
+        if expanded {
+            let label_chars = ((text_end - text_start) / (label_size * 0.54))
+                .floor()
+                .max(4.0) as usize;
+            svg_text(
+                svg,
+                text_start,
+                row_y + row_height * 0.40,
+                label_size,
+                "#57534e",
+                "start",
+                &truncate_label(name, label_chars),
+                false,
+            );
+            svg_text(
+                svg,
+                value_x,
+                row_y + row_height * 0.80,
+                detail_size,
+                "#292524",
+                "end",
+                &formatted_value,
+                true,
+            );
+            svg_text(
+                svg,
+                share_x,
+                row_y + row_height * 0.80,
+                detail_size,
+                "#292524",
+                "end",
+                &formatted_share,
+                true,
+            );
+        } else {
+            let label_width = (value_x - text_start - 10.0).max(8.0);
+            let label_chars = (label_width / (label_size * 0.54).max(0.1))
+                .floor()
+                .max(2.0) as usize;
+            let baseline = row_y + row_height * 0.68;
+            svg_text(
+                svg,
+                text_start,
+                baseline,
+                label_size,
+                "#57534e",
+                "start",
+                &truncate_label(name, label_chars),
+                false,
+            );
+            svg_text(
+                svg,
+                value_x,
+                baseline,
+                detail_size,
+                "#292524",
+                "end",
+                &formatted_value,
+                true,
+            );
+            svg_text(
+                svg,
+                share_x,
+                baseline,
+                detail_size,
+                "#292524",
+                "end",
+                &formatted_share,
+                true,
+            );
+        }
+
+        if index + 1 < chart.slices.len() && row_height >= 8.0 {
+            let separator_y = row_y + row_height;
+            let _ = write!(
+                svg,
+                r##"<line x1="{text_start:.1}" y1="{separator_y:.1}" x2="{text_end:.1}" y2="{separator_y:.1}" stroke="#e7e5e4" stroke-width="0.7"/>"##,
+            );
+        }
+        svg.push_str("</g>");
+    }
 }
 
 fn side_legend_layout(chart: &Chart, plot: PlotBox, item_count: usize) -> (f64, f64) {
@@ -2023,9 +2283,9 @@ fn side_legend_layout(chart: &Chart, plot: PlotBox, item_count: usize) -> (f64, 
     let bottom_extent = 4.0;
     let available_span = (plot.height - top_extent - bottom_extent).max(0.0);
     let row_gap = if visible > 1 {
-        (available_span / (visible - 1) as f64).min(27.0)
+        (available_span / (visible - 1) as f64).min(30.0)
     } else {
-        27.0
+        30.0
     };
     let used_span = row_gap * visible.saturating_sub(1) as f64;
     let y = plot.y + top_extent + (available_span - used_span) / 2.0;
@@ -2144,7 +2404,7 @@ fn render_legend(svg: &mut String, chart: &Chart, items: &[String], layout: Lege
                     FONT_LEGEND,
                     "#172033",
                     "end",
-                    &format!("{percentage:.0}%"),
+                    &format!("{} · {percentage:.0}%", format_tick(*value)),
                     true,
                 );
             }
@@ -2851,15 +3111,18 @@ fn render_pie(svg: &mut String, chart: &Chart, plot: PlotBox) {
         render_fallback(svg, chart, plot);
         return;
     }
-    let cx = plot.x + plot.width / 2.0;
-    let cy = plot.y + plot.height / 2.0;
-    let radius = (plot.height * 0.47).min(plot.width * 0.31);
-    let inner = radius * 0.48;
-    let ring_radius = (radius + inner) / 2.0;
-    let ring_width = radius - inner;
+    let geometry = pie_geometry(plot);
+    let PieGeometry {
+        cx,
+        cy,
+        radius,
+        inner,
+        ring_radius,
+        ring_width,
+    } = geometry;
     let _ = write!(
         svg,
-        r##"<circle cx="{cx:.2}" cy="{cy:.2}" r="{ring_radius:.2}" fill="none" stroke="#eef2f7" stroke-width="{ring_width:.2}"/>"##
+        r##"<circle cx="{cx:.2}" cy="{cy:.2}" r="{ring_radius:.2}" fill="none" stroke="#e7e5e4" stroke-width="{ring_width:.2}"/>"##
     );
     let mut angle = -std::f64::consts::FRAC_PI_2;
     let visible_slices = chart
@@ -2877,32 +3140,45 @@ fn render_pie(svg: &mut String, chart: &Chart, plot: PlotBox) {
             // A stroked circle is the exact, backend-friendly full-ring form.
             let _ = write!(
                 svg,
-                r##"<circle cx="{cx:.2}" cy="{cy:.2}" r="{ring_radius:.2}" fill="none" stroke="{}" stroke-width="{ring_width:.2}"/>"##,
-                chart.color(index)
+                r##"<circle cx="{cx:.2}" cy="{cy:.2}" r="{ring_radius:.2}" fill="none" stroke="{}" stroke-width="{ring_width:.2}"><title>{}: {} (100.0%)</title></circle>"##,
+                chart.color(index),
+                xml_escape(&chart.slices[index].0),
+                xml_escape(&format_tick(*value)),
             );
             continue;
         }
         let end = angle + fraction * std::f64::consts::TAU;
-        let large = if end - angle > std::f64::consts::PI {
+        // Cut a real, neutral gap between slices instead of outlining every
+        // wedge in white. The bounded gap stays crisp at print scale and does
+        // not swallow very small but valid slices.
+        let sweep = end - angle;
+        let gap = PIE_SLICE_GAP.min(sweep * 0.18);
+        let visible_start = angle + gap / 2.0;
+        let visible_end = end - gap / 2.0;
+        let visible_sweep = visible_end - visible_start;
+        let large = if visible_sweep > std::f64::consts::PI {
             1
         } else {
             0
         };
-        let x1 = cx + radius * angle.cos();
-        let y1 = cy + radius * angle.sin();
-        let x2 = cx + radius * end.cos();
-        let y2 = cy + radius * end.sin();
-        let ix2 = cx + inner * end.cos();
-        let iy2 = cy + inner * end.sin();
-        let ix1 = cx + inner * angle.cos();
-        let iy1 = cy + inner * angle.sin();
+        let x1 = cx + radius * visible_start.cos();
+        let y1 = cy + radius * visible_start.sin();
+        let x2 = cx + radius * visible_end.cos();
+        let y2 = cy + radius * visible_end.sin();
+        let ix2 = cx + inner * visible_end.cos();
+        let iy2 = cy + inner * visible_end.sin();
+        let ix1 = cx + inner * visible_start.cos();
+        let iy1 = cy + inner * visible_start.sin();
         let path = format!(
             "M {x1:.2} {y1:.2} A {radius:.2} {radius:.2} 0 {large} 1 {x2:.2} {y2:.2} L {ix2:.2} {iy2:.2} A {inner:.2} {inner:.2} 0 {large} 0 {ix1:.2} {iy1:.2} Z"
         );
         let _ = write!(
             svg,
-            r##"<path d="{path}" fill="{}" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>"##,
-            chart.color(index)
+            r##"<path d="{path}" fill="{}"><title>{}: {} ({percentage:.1}%)</title></path>"##,
+            chart.color(index),
+            xml_escape(&chart.slices[index].0),
+            xml_escape(&format_tick(*value)),
+            percentage = fraction * 100.0,
         );
         let middle_angle = angle + (end - angle) / 2.0;
         let label_radius = (radius + inner) / 2.0;
@@ -2933,31 +3209,62 @@ fn render_pie(svg: &mut String, chart: &Chart, plot: PlotBox) {
         }
         angle = end;
     }
+    // A clean white centre keeps the total legible without the double outline
+    // that made the old donut read like a button nested inside a ring.
     let _ = write!(
         svg,
-        r##"<circle cx="{cx:.2}" cy="{cy:.2}" r="{:.2}" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.4"/>"##,
-        (inner - 0.8).max(1.0)
+        r##"<circle cx="{cx:.2}" cy="{cy:.2}" r="{inner:.2}" fill="#ffffff"/>"##
     );
+    let total_label = format_tick(total);
+    let total_size =
+        (inner * 1.4 / (total_label.chars().count().max(1) as f64 * 0.58)).clamp(18.0, 36.0);
     svg_text(
         svg,
         cx,
         cy - 2.0,
-        20.0,
-        "#172033",
+        total_size,
+        "#292524",
         "middle",
-        &format_tick(total),
+        &total_label,
         true,
     );
+    let center_descriptor = chart.y_label.as_deref().unwrap_or("TOTAL");
+    let descriptor_chars = ((inner * 1.65) / 5.8).floor().max(5.0) as usize;
     svg_text(
         svg,
         cx,
-        cy + 16.0,
-        FONT_LABEL,
-        "#64748b",
+        cy + 21.0,
+        13.0,
+        "#78716c",
         "middle",
-        "total",
-        false,
+        &truncate_label(center_descriptor, descriptor_chars),
+        true,
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PieGeometry {
+    cx: f64,
+    cy: f64,
+    radius: f64,
+    inner: f64,
+    ring_radius: f64,
+    ring_width: f64,
+}
+
+fn pie_geometry(plot: PlotBox) -> PieGeometry {
+    let cx = plot.x + plot.width / 2.0;
+    let cy = plot.y + plot.height / 2.0;
+    let radius = (plot.height * 0.48).min(plot.width * 0.34);
+    let inner = radius * PIE_INNER_RATIO;
+    PieGeometry {
+        cx,
+        cy,
+        radius,
+        inner,
+        ring_radius: (radius + inner) / 2.0,
+        ring_width: radius - inner,
+    }
 }
 
 fn render_radar(svg: &mut String, chart: &Chart, plot: PlotBox) {
@@ -3849,10 +4156,22 @@ mod tests {
         .unwrap();
         let visible = svg_from_typst(&visible);
         assert_eq!(visible.matches(">Organic</text>").count(), 1);
+        assert_eq!(visible.matches(">60</text>").count(), 1);
         assert_eq!(visible.matches(">60%</text>").count(), 1);
+        assert_eq!(visible.matches(">40</text>").count(), 1);
         assert_eq!(visible.matches(">40%</text>").count(), 1);
-        assert!(visible.contains("r=\"5\" fill=\"#fb562d\""));
-        assert!(visible.contains("fill=\"#ffffff\" stroke=\"#e2e8f0\""));
+        assert!(visible.contains(">BREAKDOWN</text>"));
+        assert!(visible.contains(">VALUE</text>"));
+        assert!(visible.contains(">SHARE</text>"));
+        assert!(visible.contains("width=\"3\" height=\"28.0\" rx=\"1.5\" fill=\"#fb562d\""));
+        assert!(visible.contains("font-size=\"15.0\" font-weight=\"400\" fill=\"#57534e\""));
+        assert!(visible.contains("font-size=\"14.6\" font-weight=\"600\" fill=\"#292524\""));
+        assert!(visible.contains("font-size=\"36.0\" font-weight=\"600\" fill=\"#292524\""));
+        assert!(visible.contains("stroke=\"#e7e5e4\" stroke-width=\"0.7\""));
+        assert!(visible.contains("stroke=\"#e7e5e4\""));
+        assert!(visible.contains("fill=\"#ffffff\"/>"));
+        assert!(visible.contains(">TOTAL</text>"));
+        assert!(!visible.contains("stroke=\"#ffffff\""));
 
         let hidden = chart_to_typst(
             "nivo",
@@ -3871,11 +4190,12 @@ mod tests {
         .unwrap();
         let full = svg_from_typst(&full);
         assert!(full.contains("fill=\"none\" stroke=\"#fb562d\" stroke-width="));
+        assert!(full.contains("<title>Only: 9 (100.0%)</title></circle>"));
     }
 
     #[test]
-    fn pie_side_legends_split_long_labels_from_single_percentages() {
-        for (position, marker_x) in [("left", "29.0"), ("right", "563.0")] {
+    fn pie_side_legends_are_structured_data_rails() {
+        for (position, rail_x) in [("left", "385.6"), ("right", "411.4")] {
             let output = chart_to_typst(
                 "nivo",
                 &format!(
@@ -3888,18 +4208,38 @@ mod tests {
                 svg.contains(">International Enterpri…</text>"),
                 "{position}"
             );
+            assert_eq!(svg.matches(">65</text>").count(), 1, "{position}");
             assert_eq!(svg.matches(">65%</text>").count(), 1, "{position}");
+            assert_eq!(svg.matches(">35</text>").count(), 1, "{position}");
             assert_eq!(svg.matches(">35%</text>").count(), 1, "{position}");
-            assert!(!svg.contains(" · "), "{position}");
             assert!(
-                svg.contains(&format!("<circle cx=\"{marker_x}\"")),
+                svg.contains("<title>International Enterprise Accounts: 65 (65.0%)</title>"),
                 "{position}"
             );
+            assert!(svg.contains(">BREAKDOWN</text>"), "{position}");
+            assert!(svg.contains(">VALUE</text>"), "{position}");
+            assert!(svg.contains(">SHARE</text>"), "{position}");
+            assert!(svg.contains(&format!("<rect x=\"{rail_x}\"")), "{position}");
         }
     }
 
     #[test]
-    fn dense_pie_side_legend_compacts_inside_a_short_plot() {
+    fn pie_uses_bounded_real_gaps_and_accessible_slice_values() {
+        let output = chart_to_typst(
+            "nivo",
+            "type: pie\nshowLegend: false\nheight: 260\n---\nlabel,value\nLarge & steady,95\nTiny,5",
+        )
+        .unwrap();
+        let svg = svg_from_typst(&output);
+
+        assert!(svg.contains("stroke=\"#e7e5e4\""));
+        assert!(!svg.contains("stroke=\"#ffffff\""));
+        assert!(svg.contains("<title>Large &amp; steady: 95 (95.0%)</title>"));
+        assert!(svg.contains("<title>Tiny: 5 (5.0%)</title>"));
+    }
+
+    #[test]
+    fn dense_pie_data_rail_keeps_every_item_inside_a_short_plot() {
         let plot = PlotBox {
             x: 260.0,
             y: 67.0,
@@ -3908,13 +4248,61 @@ mod tests {
         };
         let mut chart = Chart::from_config("Nivo", "pie".into(), Config::default());
         chart.kind = Kind::Pie;
-        let visible = 10;
-        let (first_baseline, row_gap) = side_legend_layout(&chart, plot, visible);
-        let last_baseline = first_baseline + (visible - 1) as f64 * row_gap;
+        chart.legend_position = LegendPosition::Left;
+        chart.slices = (1..=12)
+            .map(|index| (format!("S{index}"), index as f64))
+            .collect();
+        let layout = pie_data_rail_layout(&chart, plot);
 
-        assert!(row_gap < 27.0, "dense rows should compact");
-        assert!(first_baseline - 10.0 >= plot.y - f64::EPSILON);
-        assert!(last_baseline + 4.0 <= plot.y + plot.height + f64::EPSILON);
+        assert!(layout.row_height < 14.0, "dense rows should compact");
+        assert_eq!(layout.header_height, 0.0);
+        assert!(!layout.expanded);
+        assert!(layout.y >= plot.y - f64::EPSILON);
+        assert!(
+            layout.y + layout.header_height + 12.0 * layout.row_height
+                <= plot.y + plot.height + f64::EPSILON
+        );
+
+        let output = chart_to_typst(
+            "nivo",
+            "type: pie\nshowLegend: true\nlegendPosition: right\nheight: 220\n---\nlabel,value\nS1,1\nS2,2\nS3,3\nS4,4\nS5,5\nS6,6\nS7,7\nS8,8\nS9,9\nS10,10\nS11,11\nS12,12",
+        )
+        .unwrap();
+        let svg = svg_from_typst(&output);
+        for index in 1..=12 {
+            assert!(svg.contains(&format!(">S{index}</text>")), "S{index}");
+        }
+    }
+
+    #[test]
+    fn pie_uses_y_label_as_center_descriptor() {
+        let output = chart_to_typst(
+            "nivo",
+            "type: pie\nyLabel: Documents\nshowLegend: false\n---\nlabel,value\nReports,6\nBriefs,4",
+        )
+        .unwrap();
+        let svg = svg_from_typst(&output);
+
+        assert!(svg.contains(">Documents</text>"));
+        assert!(!svg.contains(">TOTAL</text>"));
+    }
+
+    #[test]
+    fn horizontal_pie_legends_remain_compact() {
+        for position in ["top", "bottom"] {
+            let output = chart_to_typst(
+                "nivo",
+                &format!(
+                    "type: pie\nlegendPosition: {position}\n---\nlabel,value\nOrganic,6\nPaid,4"
+                ),
+            )
+            .unwrap();
+            let svg = svg_from_typst(&output);
+
+            assert!(svg.contains(">Organic · 60%</text>"), "{position}");
+            assert!(svg.contains("r=\"5\" fill=\"#fb562d\""), "{position}");
+            assert!(!svg.contains(">BREAKDOWN</text>"), "{position}");
+        }
     }
 
     #[test]
@@ -4179,7 +4567,9 @@ mod tests {
             main_path: crate::shared::MAIN_FILE.to_string(),
             source,
             source_folder: None,
+            asset_roots: Vec::new(),
             allow_universe_packages: false,
+            fonts: Vec::new(),
         })
         .expect("generated chart Typst must compile");
         assert_eq!(compiled.document.pages.len(), 1);

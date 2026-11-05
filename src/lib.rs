@@ -15,11 +15,13 @@ wasm_main!();
 #[cfg(test)]
 mod tests {
     use super::nodes::{
-        CompileTypstFileToPdfNode, CompileTypstFileToPdfSvgNode, CompileTypstFileToSvgNode,
-        CompileTypstSourceToPdfNode, CompileTypstSourceToPdfSvgNode, CompileTypstSourceToSvgNode,
+        CompileTypstFileToPdfNode, CompileTypstFileToPdfSvgNode, CompileTypstFileToPngNode,
+        CompileTypstFileToSvgNode, CompileTypstSourceToPdfNode, CompileTypstSourceToPdfSvgNode,
+        CompileTypstSourceToPngNode, CompileTypstSourceToSvgNode,
         CompileTypstTemplateFileToPdfNode, CompileTypstTemplateFileToPdfSvgNode,
-        CompileTypstTemplateFileToSvgNode, CompileTypstTemplateToPdfNode,
-        CompileTypstTemplateToPdfSvgNode, CompileTypstTemplateToSvgNode, MarkdownToTypstNode,
+        CompileTypstTemplateFileToPngNode, CompileTypstTemplateFileToSvgNode,
+        CompileTypstTemplateToPdfNode, CompileTypstTemplateToPdfSvgNode,
+        CompileTypstTemplateToPngNode, CompileTypstTemplateToSvgNode, MarkdownToTypstNode,
         ValidateTypstFileNode, ValidateTypstSourceNode,
     };
     use flow_like_wasm_sdk::*;
@@ -163,6 +165,69 @@ mod tests {
         assert!(node.pins.iter().any(|pin| pin.name == "svg_output_file"));
         assert!(node.permissions.contains(&NodePermission::StorageRead));
         assert!(node.permissions.contains(&NodePermission::StorageWrite));
+    }
+
+    fn assert_png_pins(node: &NodeDefinition) {
+        assert!(node
+            .pins
+            .iter()
+            .any(|pin| pin.name == "ppi" && pin.data_type == VariableType::Float));
+        assert!(node
+            .pins
+            .iter()
+            .any(|pin| pin.name == "page" && pin.data_type == VariableType::Integer));
+        assert!(node.pins.iter().any(|pin| pin.name == "output_file"));
+        assert!(node
+            .pins
+            .iter()
+            .any(|pin| pin.name == "png_file" && pin.pin_type == PinType::Output));
+    }
+
+    #[test]
+    fn source_to_png_node_definition() {
+        let node = CompileTypstSourceToPngNode.get_node();
+        assert_eq!(node.name, "typst_source_to_png");
+        assert_common_typst_node(&node);
+        assert_png_pins(&node);
+        assert!(node
+            .pins
+            .iter()
+            .any(|pin| pin.name == "source" && pin.data_type == VariableType::String));
+        assert!(node.pins.iter().any(|pin| pin.name == "source_folder"));
+        assert!(node.permissions.contains(&NodePermission::StorageWrite));
+    }
+
+    #[test]
+    fn file_to_png_node_definition() {
+        let node = CompileTypstFileToPngNode.get_node();
+        assert_eq!(node.name, "typst_file_to_png");
+        assert_common_typst_node(&node);
+        assert_png_pins(&node);
+        assert!(node.pins.iter().any(|pin| pin.name == "source_file"));
+        assert!(node.pins.iter().any(|pin| pin.name == "source_folder"));
+        assert!(node.permissions.contains(&NodePermission::StorageRead));
+        assert!(node.permissions.contains(&NodePermission::StorageWrite));
+    }
+
+    #[test]
+    fn template_to_png_node_definition() {
+        let node = CompileTypstTemplateToPngNode.get_node();
+        assert_eq!(node.name, "typst_template_to_png");
+        assert_template_node(&node);
+        assert_png_pins(&node);
+        assert!(node
+            .pins
+            .iter()
+            .any(|pin| pin.name == "source" && pin.data_type == VariableType::String));
+    }
+
+    #[test]
+    fn template_file_to_png_node_definition() {
+        let node = CompileTypstTemplateFileToPngNode.get_node();
+        assert_eq!(node.name, "typst_template_file_to_png");
+        assert_template_node(&node);
+        assert_png_pins(&node);
+        assert!(node.pins.iter().any(|pin| pin.name == "source_file"));
     }
 
     #[test]

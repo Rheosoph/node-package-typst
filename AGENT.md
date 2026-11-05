@@ -4,7 +4,7 @@
 
 This is a **FlowLike WASM node package** built with Rust targeting
 `wasm32-wasip2` (WASM Component Model). It contains Typst document nodes:
-source/file to PDF, source to SVG, and validation. Each node has its own file
+source/file/template to PDF, SVG, and PNG, Markdown conversion, and validation. Each node has its own file
 under `src/nodes/`; shared Typst compile/export helpers live in
 `src/shared.rs`.
 
@@ -423,13 +423,18 @@ node.set_scores(NodeScores {
 
 ## Permissions & Resource Limits
 
-`flow-like.toml` carries package metadata plus package-wide resource tiers such as memory and timeout. Capability permissions are declared per node in Rust with `node.add_permission(NodePermission::...)`, and those node-level permissions are what the runtime exposes and enforces for WASM nodes.
+`flow-like.toml` carries package metadata, package-wide resource tiers such as memory and timeout, and the outbound host allowlist. Capability permissions are declared per node in Rust with `node.add_permission(NodePermission::...)`. The runtime enforces exactly those, and the registry derives the store's capability listing from the compiled node definitions, so capabilities are not repeated in the manifest.
 
 ```toml
 [permissions]
 memory = "standard"        # Package memory tier: minimal|light|standard|heavy|intensive|large|huge|extreme|maximum
 timeout = "standard"       # Package timeout tier: quick|standard|extended|long_running|very_long|maximum
+
+[permissions.network]
+allowed_hosts = []         # Optional outbound host allowlist
 ```
+
+**Temporary exception:** this package's manifest still repeats `http_enabled` and `[permissions.filesystem]`, guarded by a lint test, because FlowLike Studio 0.1.12 strips node permissions the manifest does not repeat. Remove both once Studio and the registry derive capabilities from the nodes (see the comment in `flow-like.toml`).
 
 ```rust
 use flow_like_wasm_sdk::NodePermission;

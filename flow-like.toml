@@ -1,9 +1,10 @@
-description = "Convert Flow-Like Markdown and compile Typst source into PDF or SVG documents"
+description = "Convert Flow-Like Markdown and compile Typst source into PDF, SVG, or PNG documents"
 id = "com.flow-like.typst"
 keywords = [
     "typst",
     "pdf",
     "svg",
+    "png",
     "document",
     "template",
     "markdown",
@@ -13,7 +14,7 @@ license = "MIT"
 manifest_version = 1
 name = "Typst Documents"
 repository = "https://github.com/flow-like/flow-like-typst-nodes"
-version = "0.1.1"
+version = "0.4.0"
 
 [[authors]]
 name = "Felix Schultz (Rheosoph GmbH)"
@@ -38,9 +39,21 @@ name = "Typst File to SVG"
 
 [[nodes]]
 category = "Document/Typst"
+description = "Compile a Typst source file from FlowLike storage into PNG"
+id = "typst_file_to_png"
+name = "Typst File to PNG"
+
+[[nodes]]
+category = "Document/Typst"
 description = "Compile Typst source text into SVG"
 id = "typst_source_to_svg"
 name = "Typst Source to SVG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Compile Typst source text into PNG"
+id = "typst_source_to_png"
+name = "Typst Source to PNG"
 
 [[nodes]]
 category = "Document/Typst"
@@ -86,6 +99,18 @@ name = "Typst File with Template to SVG"
 
 [[nodes]]
 category = "Document/Typst"
+description = "Apply an optional imported Typst template function to source text and write PNG"
+id = "typst_template_to_png"
+name = "Typst Source with Template to PNG"
+
+[[nodes]]
+category = "Document/Typst"
+description = "Apply an optional imported Typst template function to a source file and write PNG"
+id = "typst_template_file_to_png"
+name = "Typst File with Template to PNG"
+
+[[nodes]]
+category = "Document/Typst"
 description = "Apply an optional imported Typst template function to source text and write PDF and SVG"
 id = "typst_template_to_pdf_svg"
 name = "Typst Source with Template to PDF + SVG"
@@ -108,8 +133,21 @@ description = "Validate a Typst source file and return diagnostics metadata"
 id = "typst_validate_file"
 name = "Validate Typst File"
 
-# Resource limits for the package sandbox (memory & timeout).
-# Permissions are declared per-node in Rust code via `node.add_permission(NodePermission::*)`.
+# Sandbox resource tiers and the outbound host allowlist. Capabilities are
+# declared per node in Rust via `node.add_permission(NodePermission::*)`.
 [permissions]
 memory = "heavy"
 timeout = "extended"
+
+[permissions.network]
+allowed_hosts = ["packages.typst.org"]
+# TEMPORARY: FlowLike Studio 0.1.12 and registries that predate node-derived
+# capabilities still read the flags below (Studio 0.1.12 strips every node
+# permission the manifest does not repeat). Delete `http_enabled`, the
+# `[permissions.filesystem]` table, and `lint_manifest_declares_every_node_permission`
+# in tests/lint.rs once both are updated.
+http_enabled = true
+
+[permissions.filesystem]
+node_storage = true
+upload_dir = true

@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "flow-like-typst-nodes"
-version = "0.1.1"
+version = "0.4.0"
 dependencies = [
  "base64",
  "binstall-tar",
@@ -598,10 +598,13 @@ dependencies = [
  "pulldown-cmark",
  "serde",
  "serde_json",
+ "tiny-skia",
+ "toml",
  "typst",
  "typst-as-lib",
  "typst-assets",
  "typst-pdf",
+ "typst-render",
  "typst-svg",
 ]
 
@@ -1601,6 +1604,15 @@ name = "pico-args"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
+
+[[package]]
+name = "pixglyph"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47945e80a49d08350e4a007ac4294c6498d23956c18ea5e6ff480dc93d31643c"
+dependencies = [
+ "ttf-parser",
+]
 
 [[package]]
 name = "plist"
@@ -2721,6 +2733,26 @@ dependencies = [
  "typst-syntax",
  "typst-timing",
  "typst-utils",
+]
+
+[[package]]
+name = "typst-render"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1baabef8c01dd7150380592811bf37af9b2498be86043834ddd629d1bcb48ccb"
+dependencies = [
+ "bytemuck",
+ "comemo",
+ "hayro",
+ "image",
+ "pixglyph",
+ "resvg",
+ "tiny-skia",
+ "ttf-parser",
+ "typst-assets",
+ "typst-library",
+ "typst-macros",
+ "typst-timing",
 ]
 
 [[package]]

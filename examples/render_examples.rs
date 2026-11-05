@@ -208,7 +208,9 @@ fn compile(source: &str) -> Result<CompiledTypstDocument, String> {
         main_path: "document.typ".to_string(),
         source: source.to_string(),
         source_folder: None,
+        asset_roots: Vec::new(),
         allow_universe_packages: false,
+        fonts: Vec::new(),
     })
 }
 

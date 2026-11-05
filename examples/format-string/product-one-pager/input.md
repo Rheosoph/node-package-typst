@@ -16,8 +16,8 @@ Give your model a format it already understands. Atlas converts Flow-Like Markdo
 ```nivo
 type: pie
 title: Documents Created This Month
-colors: [#c2410c, #f97316, #fb923c, #fdba74]
-height: 300
+colors: [#9a3412, #ea580c, #f59e0b, #d6a25e]
+height: 320
 legendPosition: right
 ---
 document,value

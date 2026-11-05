@@ -17,6 +17,8 @@ impl WasmNode for CompileTypstFileToPdfSvgNode {
         node.add_input_pin("exec", "Exec", "Trigger pin", VariableType::Execution);
         add_source_file_pin(&mut node);
         add_source_folder_pin(&mut node);
+        add_asset_roots_pin(&mut node);
+        add_font_files_pin(&mut node);
         add_package_pin(&mut node);
         add_svg_padding_pin(&mut node);
         add_pdf_svg_output_file_pins(&mut node);
