@@ -29,6 +29,9 @@ use typst_as_lib::{
     TypstEngine,
 };
 
+#[path = "shared/fonts.rs"]
+mod fonts;
+
 pub const CATEGORY: &str = "Document/Typst";
 pub const MAIN_FILE: &str = "main.typ";
 pub const DEFAULT_TEMPLATE_FUNCTION: &str = "template";
@@ -103,7 +106,7 @@ pub fn add_source_folder_pin(node: &mut NodeDefinition) {
     node.add_input_pin(
         "source_folder",
         "Source Folder",
-        "FlowPath folder used as the root for relative imports and assets",
+        "FlowPath folder for imports and assets; TTF, OTF, and TTC fonts are loaded automatically, including subfolders",
         VariableType::Struct,
     )
     .set_schema::<FlowPath>();
@@ -113,7 +116,7 @@ pub fn add_font_files_pin(node: &mut NodeDefinition) {
     node.add_input_pin(
         "font_files",
         "Font Files",
-        "Optional font file FlowPaths (TTF, OTF, or TTC); select fonts by family name in Typst",
+        "Optional additional font files (TTF, OTF, or TTC), preferred over fonts discovered in Source Folder and Asset Roots",
         VariableType::Struct,
     )
     .set_schema::<FlowPath>()
@@ -125,7 +128,7 @@ pub fn add_asset_roots_pin(node: &mut NodeDefinition) {
     node.add_input_pin(
         "asset_roots",
         "Asset Roots",
-        "Optional folders searched after Source Folder for imports and assets; first readable match wins",
+        "Optional folders searched after Source Folder for imports and assets; fonts are also loaded automatically, including subfolders",
         VariableType::Struct,
     )
     .set_schema::<FlowPath>()
@@ -402,6 +405,22 @@ fn compile(
     inputs: Option<Dict>,
     main_file: MainFileLabel,
 ) -> Result<CompiledTypstDocument, String> {
+    compile_with_font_io(project, inputs, main_file, fonts::list, fonts::read)
+}
+
+fn compile_with_font_io(
+    project: TypstProject,
+    inputs: Option<Dict>,
+    main_file: MainFileLabel,
+    list: impl FnMut(&FlowPath) -> Result<Vec<FlowPath>, String>,
+    read: impl FnMut(&FlowPath) -> Option<Vec<u8>>,
+) -> Result<CompiledTypstDocument, String> {
+    let discovered = fonts::discover(
+        project.source_folder.as_ref(),
+        &project.asset_roots,
+        list,
+        read,
+    );
     let main_path = project.main_path;
     let main_id = file_id(&main_path);
     let loaded_files = LoadedFiles::default();
@@ -417,12 +436,7 @@ fn compile(
     // typst-as-lib reports the error of the last resolver that failed, so the
     // resolver that owns every non-main file must come last.
     let engine = TypstEngine::builder()
-        .fonts(
-            project
-                .fonts
-                .into_iter()
-                .chain(typst_assets::fonts().flat_map(|bytes| Font::iter(Bytes::new(bytes)))),
-        )
+        .fonts(fonts::combine(project.fonts, discovered.fonts))
         .with_static_source_file_resolver([diagnostics.main.clone()])
         .add_file_resolver(ProjectFileResolver::new(
             &diagnostics.main,
@@ -440,11 +454,13 @@ fn compile(
     let document: PagedDocument = warned
         .output
         .map_err(|error| diagnostics.compile_error(&error))?;
-    let warnings = warned
-        .warnings
-        .iter()
-        .map(|warning| diagnostics.format(warning))
-        .collect();
+    let mut warnings = discovered.warnings;
+    warnings.extend(
+        warned
+            .warnings
+            .iter()
+            .map(|warning| diagnostics.format(warning)),
+    );
 
     Ok(CompiledTypstDocument { document, warnings })
 }
@@ -1590,6 +1606,10 @@ fn file_not_found(id: FileId) -> FileError {
 #[cfg(test)]
 #[path = "shared/asset_roots_tests.rs"]
 mod asset_roots_tests;
+
+#[cfg(test)]
+#[path = "shared/font_discovery_tests.rs"]
+mod font_discovery_tests;
 
 #[cfg(test)]
 mod tests {

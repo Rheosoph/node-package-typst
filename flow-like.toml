@@ -14,7 +14,7 @@ license = "MIT"
 manifest_version = 1
 name = "Typst Documents"
 repository = "https://github.com/flow-like/flow-like-typst-nodes"
-version = "0.4.0"
+version = "0.4.3"
 
 [[authors]]
 name = "Felix Schultz (Rheosoph GmbH)"

@@ -44,9 +44,9 @@ Primary pins:
 | `template_file` | `FlowPath` | Optional `.typ` module exporting the template function to import and apply. |
 | `template_function` | `string` | Exported function name to import from `template_file`. Defaults to `template`. |
 | `template_data` | `string` | JSON object exposed to template functions as named arguments through Typst `sys.inputs`. |
-| `source_folder` | `FlowPath` | Folder used as the root for relative imports and assets referenced by `source`. |
-| `asset_roots` | `FlowPath[]` | Optional fallback folders searched after `source_folder`, in array order; the first readable match wins. Defaults to an empty array. |
-| `font_files` | `FlowPath[]` | Optional font files loaded before compilation or validation. Accepts TTF, OTF, and TTC files; defaults to an empty array. |
+| `source_folder` | `FlowPath` | Root for relative imports and assets; font files in this folder and its subfolders are registered automatically. |
+| `asset_roots` | `FlowPath[]` | Optional fallback folders searched after `source_folder`, in array order; the first readable asset match wins. Fonts in these folders and their subfolders are registered automatically. Defaults to an empty array. |
+| `font_files` | `FlowPath[]` | Optional additional font files loaded before automatically discovered fonts. Accepts TTF, OTF, and TTC file handles; defaults to an empty array. |
 | `output_file` | `FlowPath` | PDF/SVG/PNG file to write. Compile nodes always write to this path. |
 | `ppi` | `float` | PNG resolution in pixels per inch. Defaults to `144`; `72` renders one pixel per Typst point. |
 | `page` | `integer` | 1-based page rendered by PNG nodes. Defaults to `1`; `0` stacks all pages vertically into one image. |
@@ -56,32 +56,60 @@ Primary pins:
 
 ## Custom fonts
 
-All compile and validation nodes accept an optional `font_files` array:
+All compile and validation nodes automatically discover fonts in `source_folder`
+and each `asset_roots` folder. The storage listing includes subfolders; files
+with `.ttf`, `.otf`, or `.ttc` extensions are loaded before compilation,
+regardless of extension case. Other assets, such as images, are ignored by
+font discovery.
 
-1. Upload the font files to FlowLike storage.
-2. Connect their file `FlowPath` handles as an array to `font_files`.
-3. Select the font by its family name in Typst:
+For example, a template can keep its fonts alongside its other assets:
 
-   ```typst
-   #set text(font: "Inter Tight")
-   #text(weight: 600)[Flow Like]
-   #text(weight: 900)[10 AI AGENTS]
-   ```
+```text
+referenzmappe/
+  template.typ
+  assets/
+    logo.svg
+    fonts/
+      Inter-Regular.ttf
+      JetBrainsMono-Regular.ttf
+```
+
+Connect the `referenzmappe` folder to `source_folder`, or let an inline template
+node infer it from `template_file: referenzmappe/template.typ`. No `font_files`
+connection is needed. Select the fonts by their internal family names in Typst:
+
+```typst
+#set text(font: "Inter")
+Body text
+#text(font: "JetBrains Mono")[Label]
+```
+
+Fonts in a separate template asset folder work the same way when its folder
+FlowPath is connected to `asset_roots`.
 
 For the Flow Like thumbnail, supply static Inter Tight SemiBold (600) and Black
 (900) font files. Static files provide predictable weight selection with the
 bundled Typst 0.14.2 engine; do not assume a variable font exposes every weight.
 
-Fonts are registered before compilation, including all supported faces in a TTC
-collection. The bundled Libertinus Serif, New Computer Modern, and DejaVu Sans
-Mono fonts remain available. An empty or unconnected `font_files` input uses
-only those bundled fonts.
+The optional `font_files` array still accepts explicit file FlowPaths, including
+files outside the project folders or on a different storage backend. When
+multiple fonts match the requested family and variant equally well, priority is:
 
-Each font is read directly through its FlowPath. It can be outside
-`source_folder` or use a different storage backend. The node does not scan
-`source_folder` for fonts or download them automatically. Uploading a font
-beside a `.typ` file, or reading it with Typst's `read(...)`, does not register
-it; connect it to `font_files`.
+1. Explicit `font_files`, in array order.
+2. Fonts discovered in `source_folder`, including an inferred source folder.
+3. Fonts discovered in `asset_roots`, in root array order.
+4. The bundled Libertinus Serif, New Computer Modern, and DejaVu Sans Mono fonts.
+
+All supported faces in a TTC collection are registered. Duplicate font files
+are not registered repeatedly. An empty or unconnected `font_files` input still
+uses fonts found in the project folders; without any supplied or discovered
+fonts, the bundled fonts remain available. Fonts are not downloaded
+automatically.
+
+If a folder cannot be listed, or a discovered font cannot be read or parsed,
+the node reports the issue in `report.warnings` and continues compiling with
+the available fonts. Check this output if a requested font falls back. Invalid
+or unreadable files explicitly supplied through `font_files` remain errors.
 
 The local Typst CLI uses a separate mechanism:
 
@@ -174,8 +202,9 @@ Each root may use a different storage backend and may be outside
 `source_folder`. Inline source can use `asset_roots` without a `source_folder`;
 lookup then starts at the first array entry. The same lookup supports images,
 data files, bibliographies, and local Typst imports. Typst Universe package
-files are resolved separately, and fonts still need to be connected through
-`font_files`.
+files are resolved separately. Fonts in every configured root and its
+subfolders are discovered before compilation; see [Custom fonts](#custom-fonts)
+for font selection and priority.
 
 Every root receives the same normalized, project-relative Typst path. A
 reference to `images/logo.png` from `chapters/intro.typ` therefore searches
@@ -441,15 +470,17 @@ read roots in array order. For predictable multi-file projects, connect
   `source_file` and `template_file` pins.
 - `output_file` is not part of Typst's read root and may be any writable
   FlowPath.
-- `font_files` are explicit file handles and do not need to be inside
-  `source_folder` or use its storage backend.
+- Fonts are discovered automatically in `source_folder`, `asset_roots`, and
+  their subfolders. Optional `font_files` are additional explicit file handles
+  and do not need to be inside `source_folder` or use its storage backend.
 
 If `source_folder` is omitted, a file node uses the parent of `source_file`
 (or the storage root for a file stored at the root); an inline template node
 can use the parent of `template_file`.
-The inferred folder is also searched before `asset_roots`. When body and
-template are in sibling folders, select their common parent explicitly.
-Assets in other folders can be supplied through `asset_roots`.
+The inferred folder is also searched before `asset_roots` and included in
+automatic font discovery. When body and template are in sibling folders,
+select their common parent explicitly. Assets in other folders can be supplied
+through `asset_roots`.
 
 An empty body is valid: use it when the template itself produces all visible
 content.
@@ -467,7 +498,8 @@ package errors, name only the file.
 | --- | --- |
 | `X could not be read from source_folder at FlowLike path "..."` | Upload the file to that FlowLike path, point `source_folder` at the folder that contains it, or add a matching folder to `asset_roots`. Projects copied from the Typst web app need their images and data files uploaded too, in the same folder layout. |
 | No source folder or asset roots are connected | Connect `source_folder` or an `asset_roots` array to the folders that hold the files your source references. |
-| Warning `unknown font family: ...` | Upload the required font and connect its FlowPath to `font_files`. Use its family name in `text(font: ...)`; for example, Inter and Inter Tight are different families. Without the requested font, Typst falls back and text measurements can change. |
+| Warning `unknown font family: ...` | Place the required font in `source_folder` or an `asset_roots` folder, or connect its file FlowPath to `font_files`. Check `report.warnings` for discovery problems. Use its internal family name in `text(font: ...)`; for example, Inter and Inter Tight are different families. Without the requested font, Typst falls back and text measurements can change. |
+| Font discovery reports a listing, read, or parse warning | Check that the named folder can be listed and its fonts can be read. Replace invalid font files. If folder listing is unavailable, pass individual file FlowPaths through `font_files`. |
 | `template_data must be valid JSON` | Use double quotes, remove trailing commas/comments, and validate the JSON string. |
 | `template_data must be a JSON object` | Wrap the data in `{ ... }`; a top-level array or scalar is not accepted. |
 | Typst reports `unexpected argument: ...` | Remove that JSON key or add a matching named parameter to the template function. The example's `draft` key is accepted by `draft: false`. |
